@@ -55,6 +55,7 @@
   .kpi .sub { color: var(--muted); font-size: .78rem; }
   .kpi.main .value { color: var(--accent); }
   .offers { margin-bottom: 16px; }
+  .offers.last { margin: 16px 0 0; }
   .offer { display: grid; grid-template-columns: minmax(150px, 1.2fr) 2.2fr minmax(90px, auto) minmax(120px, auto);
            gap: 4px 14px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); }
   .offer:last-of-type { border-bottom: 0; }
@@ -142,11 +143,6 @@
 
   <section class="kpis" id="kpis"></section>
 
-  <section class="card offers">
-    <h2>Comparatif des offres <small>même énergie, même kilométrage, sur la période</small></h2>
-    <div id="offers"></div>
-  </section>
-
   <section class="grid2">
     <div class="card">
       <h2>Coût par mois</h2>
@@ -178,6 +174,11 @@
       <button type="button" data-tab="trips">Trajets</button>
     </div>
     <div class="table-wrap" id="table"></div>
+  </section>
+
+  <section class="card offers last">
+    <h2>Comparatif des offres <small>même énergie, même kilométrage, sur la période</small></h2>
+    <div id="offers"></div>
   </section>
 </main>
 
