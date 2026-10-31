@@ -1,0 +1,65 @@
+services:
+  psacc:
+    image: flobz/psa_car_controller:${PSACC_VERSION:-v3.7.10}
+    container_name: psacc
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Paris
+      # Valeur par défaut de l'image, explicitée : -r = enregistrement trajets/charges
+      PSACC_OPTIONS: "-c -r --web-conf"
+    ports:
+      # Lié à l'IP LAN uniquement (pas 0.0.0.0)
+      - "${LAN_IP:?LAN_IP manquant dans .env}:5000:5000"
+    volumes:
+      - ./psacc/config:/config
+
+  psacc-sheets-sync:
+    build: ./sync
+    image: psacc-sheets-sync:local
+    container_name: psacc-sheets-sync
+    restart: unless-stopped
+    depends_on:
+      - psacc
+    environment:
+      TZ: Europe/Paris
+      SPREADSHEET_ID: ${SPREADSHEET_ID:?SPREADSHEET_ID manquant dans .env}
+      VIN: ${VIN:-}
+      SYNC_INTERVAL: ${SYNC_INTERVAL:-3600}
+      DRY_RUN: ${DRY_RUN:-false}
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-sa
+    volumes:
+      - ./psacc/config:/config:ro
+    secrets:
+      - google-sa
+
+  e208-dashboard:
+    build: ./web
+    image: e208-dashboard:local
+    container_name: e208-dashboard
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Paris
+      SPREADSHEET_ID: ${DASHBOARD_SPREADSHEET_ID:-${SPREADSHEET_ID}}
+      CACHE_SECONDS: ${DASHBOARD_CACHE_SECONDS:-300}
+      BASE_PRICE_KWH: ${BASE_PRICE_KWH:-}
+      HCHP_HC_PRICE_KWH: ${HCHP_HC_PRICE_KWH:-}
+      HCHP_HP_PRICE_KWH: ${HCHP_HP_PRICE_KWH:-}
+      ZEN_LOW_PRICE_KWH: ${ZEN_LOW_PRICE_KWH:-}
+      ZEN_HIGH_PRICE_KWH: ${ZEN_HIGH_PRICE_KWH:-}
+      PETROL_L_100KM: ${PETROL_L_100KM:-}
+      PETROL_FUEL: ${PETROL_FUEL:-sp98}
+      PETROL_DEPARTEMENT: ${PETROL_DEPARTEMENT:-}
+      VIN: ${VIN:-}
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-sa
+    volumes:
+      # Positions GPS des trajets (carte), lues dans une copie de info.db
+      - ./psacc/config:/config:ro
+    ports:
+      # Lié à l'IP LAN uniquement (pas 0.0.0.0)
+      - "${LAN_IP:?LAN_IP manquant dans .env}:${DASHBOARD_PORT:-8080}:8080"
+    secrets:
+      - google-sa
+
+secrets:
+  google-sa:
+    file: ./secrets/google-sa.json

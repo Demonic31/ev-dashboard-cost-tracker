@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>e-208 · Suivi Tempo</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root {
+    --bg: #f4f6f9; --card: #ffffff; --text: #1d2430; --muted: #6b7585; --border: #e3e7ee;
+    --accent: #0f766e; --bleu: #2563eb; --bleu-hc: #1e40af; --blanc: #94a3b8; --blanc-hc: #64748b;
+    --rouge: #dc2626; --rouge-hc: #991b1b; --base: #a8a29e; --petrol: #b45309; --good: #15803d; --bad: #b91c1c;
+    --track: #0f766e; --track-sel: #ea580c; --shadow: 0 1px 3px rgba(15, 23, 42, .08); --tiles: none;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f141b; --card: #171e28; --text: #e6ebf2; --muted: #8a96a8; --border: #263040;
+      --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --good: #4ade80; --bad: #f87171;
+      --track: #2dd4bf; --track-sel: #fb923c; --shadow: none;
+      --tiles: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f141b; --card: #171e28; --text: #e6ebf2; --muted: #8a96a8; --border: #263040;
+    --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --good: #4ade80; --bad: #f87171;
+    --track: #2dd4bf; --track-sel: #fb923c; --shadow: none;
+    --tiles: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px;
+           margin-bottom: 16px; }
+  h1 { font-size: 1.5rem; margin: 0; }
+  h1 span { color: var(--accent); }
+  h2 { font-size: 1rem; margin: 0 0 12px; }
+  h2 small { color: var(--muted); font-weight: 400; font-size: .8rem; margin-left: 6px; }
+  .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 12px; align-items: center; }
+  button, select, input { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+           padding: 6px 10px; font: inherit; font-size: .85rem; }
+  button { cursor: pointer; }
+  button:hover, select:hover { border-color: var(--accent); }
+  input[type="date"] { color-scheme: light dark; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px;
+          box-shadow: var(--shadow); min-width: 0; }
+  .period { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 16px; padding: 10px 16px; }
+  .period label { color: var(--muted); font-size: .85rem; }
+  .period .range { color: var(--muted); font-size: .85rem; margin-left: auto; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .kpi .label { color: var(--muted); font-size: .8rem; }
+  .kpi .value { font-size: 1.45rem; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .kpi .sub { color: var(--muted); font-size: .78rem; }
+  .kpi.main .value { color: var(--accent); }
+  .offers { margin-bottom: 16px; }
+  .offer { display: grid; grid-template-columns: minmax(150px, 1.2fr) 2.2fr minmax(90px, auto) minmax(120px, auto);
+           gap: 4px 14px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); }
+  .offer:last-of-type { border-bottom: 0; }
+  .offer .name { font-weight: 600; } .offer .name small { display: block; color: var(--muted); font-weight: 400; font-size: .76rem; }
+  .offer .cost { text-align: right; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .offer .delta { text-align: right; font-size: .82rem; font-variant-numeric: tabular-nums; }
+  .offer .delta.up { color: var(--bad); } .offer .delta.down { color: var(--good); }
+  .offer.ref .name, .offer.ref .cost { color: var(--accent); }
+  .offer .track { height: 10px; border-radius: 5px; background: var(--border); overflow: hidden; }
+  .offer .track span { display: block; height: 100%; border-radius: 5px; }
+  .offer .missing { color: var(--muted); font-size: .82rem; grid-column: 2 / -1; }
+  .notes { color: var(--muted); font-size: .76rem; margin: 10px 0 0; padding-left: 18px; }
+  @media (max-width: 640px) {
+    .offer { grid-template-columns: 1fr auto; }
+    .offer .track { grid-column: 1 / -1; grid-row: 2; }
+    .offer .delta { grid-column: 2; }
+  }
+  .grid2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .grid2 > .card { display: flex; flex-direction: column; }
+  @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+  .chart { position: relative; height: 280px; }
+  .empty { color: var(--muted); font-size: .9rem; padding: 24px 0; text-align: center; }
+  #map { flex: 1; min-height: 380px; border-radius: 8px; z-index: 0; }
+  .leaflet-tile-pane { filter: var(--tiles); }
+  .leaflet-container { background: var(--border); font: inherit; }
+  .stock { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+  .stock .n { font-size: 1.35rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stock .n small { font-size: .8rem; color: var(--muted); font-weight: 400; }
+  .stock .label { color: var(--muted); font-size: .78rem; }
+  .gauge { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; margin-top: 4px; }
+  .gauge span { display: block; height: 100%; }
+  .tomorrow { font-size: .85rem; color: var(--muted); margin-bottom: 12px; }
+  .months { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px 8px; }
+  .month .title { font-size: .72rem; color: var(--muted); margin-bottom: 3px; text-transform: capitalize; }
+  .month .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .day { aspect-ratio: 1; border-radius: 2px; background: transparent; outline: 1px solid var(--border); outline-offset: -1px; }
+  .day.pad { outline: none; }
+  .day.BLEU { background: var(--bleu); outline: none; } .day.BLANC { background: var(--blanc); outline: none; }
+  .day.ROUGE { background: var(--rouge); outline: none; }
+  .day.today { box-shadow: 0 0 0 2px var(--text); }
+  .legend { display: flex; gap: 14px; color: var(--muted); font-size: .78rem; margin-top: 10px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tabs button.active { background: var(--accent); color: var(--card); border-color: var(--accent); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; font-variant-numeric: tabular-nums; }
+  th, td { padding: 8px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--card); }
+  th:first-child, td:first-child, td.text { text-align: left; }
+  td.note { white-space: normal; min-width: 160px; color: var(--muted); text-align: left; }
+  tr.clickable { cursor: pointer; } tr.clickable:hover td { background: var(--bg); }
+  tr.selected td { background: color-mix(in srgb, var(--track-sel) 14%, transparent); }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .75rem; font-weight: 600; color: #fff; }
+  .pill.BLEU { background: var(--bleu); } .pill.BLANC { background: var(--blanc); color: #1d2430; }
+  .pill.ROUGE { background: var(--rouge); }
+  .bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--border); min-width: 90px; }
+  .error { background: #fee2e2; color: #991b1b; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; display: none; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>e-208 <span>· Suivi Tempo</span></h1>
+    <div class="meta"><span id="fetched">Chargement…</span><button id="refresh" type="button">Actualiser</button></div>
+  </header>
+  <div class="error" id="error"></div>
+
+  <section class="card period">
+    <label for="preset">Période</label>
+    <select id="preset">
+      <option value="all">Tout</option>
+      <option value="season">Saison Tempo en cours</option>
+      <option value="prevseason">Saison Tempo précédente</option>
+      <option value="last12">12 derniers mois</option>
+      <option value="year">Année civile en cours</option>
+      <option value="month">Mois en cours</option>
+      <option value="prevmonth">Mois précédent</option>
+      <option value="custom">Personnalisée…</option>
+    </select>
+    <span id="customDates" hidden>
+      <input type="date" id="from" aria-label="Du"> → <input type="date" id="to" aria-label="Au">
+    </span>
+    <span class="range" id="rangeText"></span>
+  </section>
+
+  <section class="kpis" id="kpis"></section>
+
+  <section class="card offers">
+    <h2>Comparatif des offres <small>même énergie, même kilométrage, sur la période</small></h2>
+    <div id="offers"></div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <h2>Coût par mois</h2>
+      <div class="chart"><canvas id="monthsChart"></canvas></div>
+      <div class="empty" id="monthsEmpty" hidden>Aucune recharge sur la période</div>
+    </div>
+    <div class="card">
+      <h2>Énergie par tranche Tempo</h2>
+      <div class="chart"><canvas id="tranchesChart"></canvas></div>
+      <div class="empty" id="tranchesEmpty" hidden>Pas de kWh sur la période</div>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <h2>Carte des trajets <small id="mapInfo"></small></h2>
+      <div id="map"></div>
+      <div class="empty" id="mapEmpty" hidden></div>
+    </div>
+    <div class="card">
+      <h2>Saison Tempo <small id="seasonName"></small></h2>
+      <div id="season"><div class="empty">Chargement…</div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="tabs">
+      <button type="button" class="active" data-tab="charges">Recharges</button>
+      <button type="button" data-tab="trips">Trajets</button>
+    </div>
+    <div class="table-wrap" id="table"></div>
+  </section>
+</main>
+
+<script>
+const fr = (n, d = 1) => (n === "" || n === null || n === undefined || isNaN(n)) ? "–"
+  : Number(n).toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d });
+const eur = (n, d = 2) => fr(n, d) === "–" ? "–" : fr(n, d) + " €";
+const dt = s => s ? new Date(s).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit",
+  hour: "2-digit", minute: "2-digit" }) : "–";
+const dshort = s => new Date(s + "T12:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const num = v => typeof v === "number" ? v : 0;
+const sum = (rows, i) => rows.reduce((s, r) => s + num(r[i]), 0);
+const ratio = (a, b, k = 1) => b ? a / b * k : "";
+const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } },
+                set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* stockage indisponible */ } } };
+
+// Colonnes (0-based) de l'onglet Recharges A:W et Trajets A:H
+const C = { start: 1, kwhBat: 5, slots: 7, note: 14, duration: 15, color: 16, kwh: 17, cost: 18, eurKwh: 19, km: 20, eur100: 21 };
+const T = { id: 0, start: 1, end: 2, km: 3, kwh: 4, kwh100: 5, odo: 6 };
+// Format des KPI du Dashboard, dans l'ordre des colonnes A:I du Sheet
+const KPI_FMT = [v => eur(v), v => fr(v, 1), v => fr(v, 0), v => eur(v), v => fr(v, 1), v => eur(v, 4),
+                 v => fr(v, 0), v => fr(v, 0), v => fr(v, 1)];
+const TRANCHES = ["Bleu HC", "Bleu HP", "Blanc HC", "Blanc HP", "Rouge HC", "Rouge HP"];
+const TRANCHE_COLORS = ["--bleu-hc", "--bleu", "--blanc-hc", "--blanc", "--rouge-hc", "--rouge"];
+const QUOTA = { BLEU: "Bleus", BLANC: "Blancs", ROUGE: "Rouges" };
+let data = null, tracks = {}, charts = {}, currentTab = "charges", view = null, selectedTrip = null;
+
+// ------------------------------------------------------------------ période
+function seasonStart(d) { return new Date(d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1, 8, 1); }
+
+function periodRange() {
+  const p = document.getElementById("preset").value, now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  const add = (d, days) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + days);
+  switch (p) {
+    case "season": { const s = seasonStart(now); return [iso(s), iso(add(new Date(s.getFullYear() + 1, 8, 1), -1))]; }
+    case "prevseason": { const s = seasonStart(now); return [iso(new Date(s.getFullYear() - 1, 8, 1)), iso(add(s, -1))]; }
+    case "last12": return [iso(add(new Date(y - 1, m, now.getDate()), 1)), iso(now)];
+    case "year": return [`${y}-01-01`, `${y}-12-31`];
+    case "month": return [iso(new Date(y, m, 1)), iso(new Date(y, m + 1, 0))];
+    case "prevmonth": return [iso(new Date(y, m - 1, 1)), iso(new Date(y, m, 0))];
+    case "custom": return [document.getElementById("from").value || null, document.getElementById("to").value || null];
+    default: return [null, null];
+  }
+}
+
+// Lignes du Sheet restreintes à la période (sur la date de début), et agrégats recalculés comme le Dashboard
+function computeView() {
+  const [from, to] = periodRange(), all = !from && !to;
+  const inRange = s => typeof s === "string" && (!from || s.slice(0, 10) >= from) && (!to || s.slice(0, 10) <= to);
+  const charges = data.charges.rows.filter(r => inRange(r[C.start]));
+  const trips = data.trips.rows.filter(r => inRange(r[T.start]));
+  const months = data.months.filter(m => (!from || m.month >= from.slice(0, 7)) && (!to || m.month <= to.slice(0, 7)));
+  let kpi;
+  if (all) kpi = data.kpi.map(k => k.value);
+  else {
+    const withKm = charges.filter(r => num(r[C.km]) > 0), km = sum(charges, C.km);
+    const cost = sum(charges, C.cost), kwh = sum(charges, C.kwh);
+    kpi = [cost, kwh, km, ratio(sum(withKm, C.cost), km, 100), ratio(sum(withKm, C.kwh), km, 100), ratio(cost, kwh),
+           charges.length, sum(trips, T.km), ratio(sum(trips, T.kwh), sum(trips, T.km), 100)];
+  }
+  const tranches = all ? data.tranches.map(t => num(t.kwh))
+    : TRANCHES.map((_, i) => sum(charges, C.slots + i) * num(data.loss_coef || 1));
+  return { from, to, all, charges, trips, months, kpi, tranches,
+           cost: all ? num(data.kpi[0]?.value) : kpi[0], kwh: all ? num(data.kpi[1]?.value) : kpi[1] };
+}
+
+function renderPeriod() {
+  const { from, to, all } = view;
+  document.getElementById("rangeText").textContent = all ? "Toutes les données du Sheet"
+    : `${from ? "du " + dshort(from) : "depuis le début"} ${to ? "au " + dshort(to) : "à aujourd'hui"} · ` +
+      `${view.charges.length} recharge(s), ${view.trips.length} trajet(s)`;
+}
+
+// ------------------------------------------------------------------ KPI + comparaison Base
+function renderKpis() {
+  const cards = data.kpi.map((k, i) =>
+    `<div class="card kpi${i === 0 || i === 3 ? " main" : ""}"><div class="label">${esc(k.label)}</div>
+     <div class="value">${(KPI_FMT[i] || (v => esc(v)))(view.kpi[i])}</div></div>`);
+  document.getElementById("kpis").innerHTML = cards.join("");
+}
+
+// ------------------------------------------------------------------ comparatif des offres
+// Jours fériés français (fixes + lundi de Pâques, Ascension, lundi de Pentecôte)
+const holidays = {};
+function isHoliday(d) {
+  const y = d.getFullYear();
+  if (!holidays[y]) {
+    // Dimanche de Pâques (algorithme de Meeus/Jones/Butcher)
+    const a = y % 19, b = Math.floor(y / 100), c = y % 100, d4 = Math.floor(b / 4), e = b % 4;
+    const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d4 - g + 15) % 30;
+    const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31), day = (h + l - 7 * m + 114) % 31 + 1;
+    const easter = n => iso(new Date(y, month - 1, day + n));
+    holidays[y] = new Set([`${y}-01-01`, `${y}-05-01`, `${y}-05-08`, `${y}-07-14`, `${y}-08-15`, `${y}-11-01`, `${y}-11-11`, `${y}-12-25`,
+                           easter(1), easter(39), easter(50)]);
+  }
+  return holidays[y].has(iso(d));
+}
+
+// Part de la durée d'une charge en prix « bas » Zen Week-End + HC : week-end, jour férié ou heures creuses en semaine
+function zenLowShare(r) {
+  const start = new Date(r[C.start]), end = new Date(r[2]);
+  if (!(end > start)) return null;
+  const [hcStart, hcEnd] = data.hc_hours.map(Number), step = 5 * 60e3;
+  let low = 0, n = 0;
+  for (let t = start.getTime() + step / 2; t < end.getTime(); t += step, n++) {
+    const d = new Date(t), hour = d.getHours() + d.getMinutes() / 60;
+    const hc = hcStart > hcEnd ? hour >= hcStart || hour < hcEnd : hour >= hcStart && hour < hcEnd;
+    if (hc || d.getDay() === 0 || d.getDay() === 6 || isHoliday(d)) low++;
+  }
+  return n ? low / n : null;
+}
+
+function renderOffers() {
+  const o = data.offers || {}, coef = num(data.loss_coef || 1), rows = view.charges;
+  const hcKwh = rows.reduce((s, r) => s + num(r[C.slots]) + num(r[C.slots + 2]) + num(r[C.slots + 4]), 0) * coef;
+  const hpKwh = rows.reduce((s, r) => s + num(r[C.slots + 1]) + num(r[C.slots + 3]) + num(r[C.slots + 5]), 0) * coef;
+  const km = num(view.kpi[2]), [hcS, hcE] = data.hc_hours;
+  const hcLabel = `HC ${hcS}h–${hcE}h`;
+  const list = [{ name: "Tempo", sub: "ton contrat (Sheet)", cost: view.cost, color: "--accent", ref: true }];
+  list.push(o.base ? { name: "Base", sub: `${fr(o.base, 4)} €/kWh`, cost: view.kwh * o.base, color: "--base" }
+                   : { name: "Base", missing: "BASE_PRICE_KWH" });
+  list.push(o.hchp?.hc && o.hchp?.hp
+    ? { name: "Heures creuses", sub: `${hcLabel} ${fr(o.hchp.hc, 4)} · HP ${fr(o.hchp.hp, 4)} €/kWh`,
+        cost: hcKwh * o.hchp.hc + hpKwh * o.hchp.hp, color: "--bleu" }
+    : { name: "Heures creuses", missing: "HCHP_HC_PRICE_KWH / HCHP_HP_PRICE_KWH" });
+  if (o.zen?.low && o.zen?.high) {
+    let cost = 0, lowKwh = 0;
+    rows.forEach(r => { const share = zenLowShare(r) ?? 1, kwh = num(r[C.kwh]);
+      lowKwh += kwh * share; cost += kwh * (share * o.zen.low + (1 - share) * o.zen.high); });
+    list.push({ name: "Zen Week-End + HC", sub: `WE, fériés et ${hcLabel} ${fr(o.zen.low, 4)} · semaine HP ${fr(o.zen.high, 4)} €/kWh` +
+      (view.kwh ? ` · ${fr(100 * lowKwh / view.kwh, 0)} % au prix bas` : ""), cost, color: "--blanc-hc" });
+  } else list.push({ name: "Zen Week-End + HC", missing: "ZEN_LOW_PRICE_KWH / ZEN_HIGH_PRICE_KWH" });
+  const fuel = o.fuel;
+  if (o.petrol_l_100km && fuel && !fuel.error)
+    list.push({ name: `Essence ${fuel.fuel}`, sub: `${fr(o.petrol_l_100km, 1)} L/100 km × ${fr(fuel.price, 3)} €/L ` +
+      `(moyenne ${fuel.zone}, ${fuel.stations} stations, ${fuel.days} derniers jours)`, cost: km * o.petrol_l_100km / 100 * fuel.price, color: "--petrol" });
+  else list.push({ name: "Essence", missing: fuel?.error ? "prix carburant indisponible : " + fuel.error : "PETROL_L_100KM" });
+
+  const max = Math.max(...list.map(x => x.cost || 0)) || 1, ref = view.cost;
+  document.getElementById("offers").innerHTML = list.map(x => {
+    if (x.missing) return `<div class="offer"><div class="name">${x.name}</div><div class="missing">Renseigner ${esc(x.missing)} dans .env</div></div>`;
+    const d = x.cost - ref, pct = ref ? 100 * d / ref : 0;
+    return `<div class="offer${x.ref ? " ref" : ""}"><div class="name">${x.name}<small>${esc(x.sub)}</small></div>
+      <div class="track"><span style="width:${100 * x.cost / max}%;background:${css(x.color)}"></span></div>
+      <div class="cost">${eur(x.cost)}</div>
+      <div class="delta ${x.ref ? "" : d > 0.005 ? "up" : d < -0.005 ? "down" : ""}">${x.ref ? (view.kpi[3] !== "" ? eur(view.kpi[3]) + " /100 km" : "")
+        : `${d >= 0 ? "+" : "−"}${eur(Math.abs(d))} (${d >= 0 ? "+" : "−"}${fr(Math.abs(pct), 0)} %)`}</div></div>`;
+  }).join("") + `<ul class="notes">
+    <li>Coût de l'énergie seule (kWh facturés = kWh batterie × ${fr(coef, 2)}), abonnements non compris.</li>
+    <li>Heures creuses et Zen supposent les mêmes heures creuses que Tempo (${hcLabel}, onglet Paramètres) ; Zen est réparti au prorata du temps de charge.</li>
+    <li>Essence : ${fr(km, 0)} km parcourus sur la période (compteur entre recharges).</li></ul>`;
+}
+
+// ------------------------------------------------------------------ graphiques
+function chart(id, config) {
+  charts[id]?.destroy();
+  charts[id] = new Chart(document.getElementById(id), config);
+}
+
+function renderCharts() {
+  Chart.defaults.color = css("--muted");
+  Chart.defaults.borderColor = css("--border");
+  const months = view.months;
+  document.getElementById("monthsEmpty").hidden = months.length > 0;
+  document.getElementById("monthsChart").parentElement.hidden = months.length === 0;
+  const datasets = [
+    { type: "bar", label: "Coût (€)", data: months.map(m => m.cost), backgroundColor: css("--accent"),
+      borderRadius: 6, yAxisID: "y", order: 2 },
+  ];
+  datasets.push({ type: "line", label: "€/100 km", data: months.map(m => m.eur_100km === "" ? null : m.eur_100km),
+    borderColor: css("--rouge"), backgroundColor: css("--rouge"), tension: .3, yAxisID: "y1", order: 1 });
+  if (months.length) chart("monthsChart", {
+    data: { labels: months.map(m => new Date(m.month + "-01").toLocaleDateString("fr-FR", { month: "short", year: "2-digit" })), datasets },
+    options: { maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+      scales: { y: { beginAtZero: true, title: { display: true, text: "€" } },
+                y1: { beginAtZero: true, position: "right", grid: { drawOnChartArea: false },
+                      title: { display: true, text: "€/100 km" } } },
+      plugins: { legend: { labels: { boxWidth: 10 } },
+                 tooltip: { callbacks: { label: c => `${c.dataset.label} : ${fr(c.raw, 2)}` } } } },
+  });
+
+  const tr = view.tranches, total = tr.reduce((s, v) => s + v, 0);
+  document.getElementById("tranchesEmpty").hidden = total > 0;
+  document.getElementById("tranchesChart").parentElement.hidden = total === 0;
+  if (total > 0) chart("tranchesChart", {
+    type: "doughnut",
+    data: { labels: TRANCHES, datasets: [{ data: tr, backgroundColor: TRANCHE_COLORS.map(css), borderWidth: 0 }] },
+    options: { maintainAspectRatio: false, cutout: "62%",
+      plugins: { legend: { position: "bottom", labels: { boxWidth: 10 } },
+                 tooltip: { callbacks: { label: c => `${c.label} : ${fr(c.raw, 1)} kWh (${fr(100 * c.raw / total, 0)} %)` } } } },
+  });
+}
+
+// ------------------------------------------------------------------ saison Tempo
+function renderSeason() {
+  const el = document.getElementById("season"), s = data.season || {};
+  if (s.error || !s.stats) { el.innerHTML = `<div class="empty">API Tempo indisponible : ${esc(s.error || "pas de données")}</div>`; return; }
+  document.getElementById("seasonName").textContent = s.periode;
+  const st = s.stats, total = { BLEU: (st.joursBleusConsommes || 0) + (st.joursBleusRestants || 0),
+    BLANC: (st.joursBlancsConsommes || 0) + (st.joursBlancsRestants || 0), ROUGE: (st.joursRougesConsommes || 0) + (st.joursRougesRestants || 0) };
+  const left = { BLEU: st.joursBleusRestants, BLANC: st.joursBlancsRestants, ROUGE: st.joursRougesRestants };
+  const colorOf = Object.fromEntries(s.days.filter(d => d.color).map(d => [d.day, d.color]));
+  const today = iso(new Date()), tomorrow = iso(new Date(Date.now() + 864e5));
+  const stock = ["BLANC", "ROUGE", "BLEU"].map(c => `<div><div class="label">${QUOTA[c]} restants</div>
+      <div class="n">${left[c] ?? "–"}<small> / ${total[c]}</small></div>
+      <div class="gauge"><span style="width:${total[c] ? 100 * (left[c] || 0) / total[c] : 0}%;background:var(--${c.toLowerCase()})"></span></div></div>`).join("");
+  const start = new Date(+s.periode.slice(0, 4), 8, 1), months = [];
+  for (let i = 0; i < 12; i++) {
+    const first = new Date(start.getFullYear(), start.getMonth() + i, 1), n = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    const cells = Array((first.getDay() + 6) % 7).fill('<div class="day pad"></div>');
+    for (let d = 1; d <= n; d++) {
+      const k = iso(new Date(first.getFullYear(), first.getMonth(), d)), c = colorOf[k] || "";
+      cells.push(`<div class="day ${c}${k === today ? " today" : ""}" title="${dshort(k)}${c ? " : " + c : ""}"></div>`);
+    }
+    months.push(`<div class="month"><div class="title">${first.toLocaleDateString("fr-FR", { month: "short", year: "2-digit" })}</div>
+      <div class="days">${cells.join("")}</div></div>`);
+  }
+  el.innerHTML = `<div class="stock">${stock}</div>
+    <div class="tomorrow">Demain : ${colorOf[tomorrow] ? `<span class="pill ${colorOf[tomorrow]}">${colorOf[tomorrow]}</span>` : "pas encore publié"}
+      · ${Math.max(0, Math.round((new Date(start.getFullYear() + 1, 8, 1) - new Date(today)) / 864e5))} jours avant la fin de saison</div>
+    <div class="months">${months.join("")}</div>
+    <div class="legend"><span><i style="background:var(--bleu)"></i>Bleu</span><span><i style="background:var(--blanc)"></i>Blanc</span>
+      <span><i style="background:var(--rouge)"></i>Rouge</span><span>Rouges du 1er nov. au 31 mars, hors week-end</span></div>`;
+}
+
+// ------------------------------------------------------------------ carte
+let map = null, layers = {};
+function renderMap() {
+  const shown = view.trips.filter(r => tracks[r[T.id]]);
+  const empty = document.getElementById("mapEmpty"), mapEl = document.getElementById("map");
+  document.getElementById("mapInfo").textContent = shown.length ? `${shown.length} trajet(s) · cliquer un trajet pour le surligner` : "";
+  if (!shown.length) {
+    mapEl.hidden = true; empty.hidden = false;
+    empty.textContent = tracks.__error ? "Positions indisponibles : " + tracks.__error : "Aucun tracé GPS sur la période";
+    return;
+  }
+  mapEl.hidden = false; empty.hidden = true;
+  if (!map) {
+    map = L.map(mapEl, { scrollWheelZoom: false });
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
+  }
+  map.invalidateSize();
+  Object.values(layers).forEach(l => l.remove());
+  layers = {};
+  shown.forEach(r => {
+    const id = r[T.id];
+    layers[id] = L.polyline(tracks[id], { color: css("--track"), weight: 3, opacity: .75 })
+      .bindTooltip(`${dt(r[T.start])} · ${fr(r[T.km], 1)} km · ${fr(r[T.kwh100], 1)} kWh/100`, { sticky: true })
+      .on("click", () => selectTrip(id, false)).addTo(map);
+  });
+  if (selectedTrip && !layers[selectedTrip]) selectedTrip = null;
+  styleTracks();
+  map.fitBounds(L.featureGroup(Object.values(selectedTrip ? [layers[selectedTrip]] : layers)).getBounds(), { padding: [20, 20] });
+}
+
+function styleTracks() {
+  Object.entries(layers).forEach(([id, l]) => {
+    const sel = id === selectedTrip;
+    l.setStyle({ color: css(sel ? "--track-sel" : "--track"), weight: sel ? 5 : 3, opacity: selectedTrip && !sel ? .35 : .8 });
+    if (sel) l.bringToFront();
+  });
+  document.querySelectorAll("tr[data-trip]").forEach(tr => tr.classList.toggle("selected", tr.dataset.trip === selectedTrip));
+}
+
+function selectTrip(id, zoom = true) {
+  selectedTrip = selectedTrip === id ? null : id;
+  styleTracks();
+  if (zoom && selectedTrip && layers[selectedTrip]) {
+    map.fitBounds(layers[selectedTrip].getBounds(), { padding: [20, 20] });
+    document.getElementById("map").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+}
+
+// ------------------------------------------------------------------ tableaux
+function renderTable() {
+  const el = document.getElementById("table");
+  if (currentTab === "charges") {
+    const rows = [...view.charges].reverse();
+    if (!rows.length) { el.innerHTML = '<div class="empty">Aucune recharge sur la période</div>'; return; }
+    el.innerHTML = `<table><thead><tr><th>Début</th><th>Durée</th><th>% batterie</th><th>kWh batterie</th>
+      <th>Couleur</th><th>Répartition HC/HP</th><th>kWh compteur</th><th>Coût</th>
+      <th>€/kWh</th><th>Km</th><th>€/100 km</th><th>Note</th></tr></thead><tbody>${
+      rows.map(r => {
+        const parts = r.slice(C.slots, C.slots + 6).map(Number), total = parts.reduce((a, b) => a + (b || 0), 0) || 1;
+        const bar = parts.map((p, i) => p > 0 ? `<span style="width:${100 * p / total}%;background:${css(TRANCHE_COLORS[i])}" title="${TRANCHES[i]} : ${fr(p, 2)} kWh"></span>` : "").join("");
+        return `<tr><td>${dt(r[C.start])}</td><td>${fr(r[C.duration], 1)} h</td><td>${fr(r[3], 0)} → ${fr(r[4], 0)} %</td>
+          <td>${fr(r[C.kwhBat], 1)}</td><td class="text">${r[C.color] ? `<span class="pill ${esc(r[C.color])}">${esc(r[C.color])}</span>` : "–"}</td>
+          <td class="text"><div class="bar">${bar}</div></td><td>${fr(r[C.kwh], 1)}</td><td>${eur(r[C.cost])}</td>
+          <td>${eur(r[C.eurKwh], 4)}</td><td>${fr(r[C.km], 0)}</td><td>${eur(r[C.eur100])}</td><td class="note">${esc(r[C.note])}</td></tr>`;
+      }).join("")}</tbody></table>`;
+  } else {
+    const rows = [...view.trips].reverse();
+    if (!rows.length) { el.innerHTML = '<div class="empty">Aucun trajet sur la période</div>'; return; }
+    el.innerHTML = `<table><thead><tr><th>Début</th><th>Fin</th><th>Distance</th><th>Conso batterie</th>
+      <th>kWh/100 km</th><th>Compteur fin</th><th>Carte</th></tr></thead><tbody>${
+      rows.map(r => { const has = !!tracks[r[T.id]];
+        return `<tr${has ? ` class="clickable" data-trip="${esc(r[T.id])}"` : ""}><td>${dt(r[T.start])}</td><td>${dt(r[T.end])}</td>
+        <td>${fr(r[T.km], 1)} km</td><td>${fr(r[T.kwh], 2)} kWh</td><td>${fr(r[T.kwh100], 1)}</td><td>${fr(r[T.odo], 0)} km</td>
+        <td>${has ? "📍" : "–"}</td></tr>`; }).join("")}</tbody></table>`;
+    el.querySelectorAll("tr[data-trip]").forEach(tr => tr.addEventListener("click", () => selectTrip(tr.dataset.trip)));
+    styleTracks();
+  }
+}
+
+// ------------------------------------------------------------------ chargement
+function render() {
+  view = computeView();
+  renderPeriod(); renderKpis(); renderOffers(); renderCharts(); renderMap(); renderTable();
+}
+
+async function loadTracks(force) {
+  try {
+    const body = await (await fetch("api/tracks" + (force ? "?refresh=1" : ""))).json();
+    tracks = body.tracks || {};
+    if (body.error) tracks.__error = body.error;
+  } catch (e) { tracks = { __error: e.message }; }
+}
+
+async function load(force = false) {
+  const err = document.getElementById("error");
+  try {
+    const resp = await fetch("api/data" + (force ? "?refresh=1" : ""));
+    const body = await resp.json();
+    if (!resp.ok) throw new Error(body.error || resp.status);
+    data = body;
+    await loadTracks(force);
+    err.style.display = "none";
+    document.getElementById("fetched").textContent = "Données du Sheet au " + new Date(data.fetched_at).toLocaleString("fr-FR");
+    renderSeason(); render();
+  } catch (e) {
+    err.textContent = "Impossible de lire le Google Sheet : " + e.message;
+    err.style.display = "block";
+  }
+}
+
+const preset = document.getElementById("preset");
+preset.value = store.get("e208.preset") || "all";
+document.getElementById("from").value = store.get("e208.from") || "";
+document.getElementById("to").value = store.get("e208.to") || "";
+document.getElementById("customDates").hidden = preset.value !== "custom";
+function onPeriod() {
+  document.getElementById("customDates").hidden = preset.value !== "custom";
+  store.set("e208.preset", preset.value);
+  store.set("e208.from", document.getElementById("from").value);
+  store.set("e208.to", document.getElementById("to").value);
+  if (data) render();
+}
+[preset, document.getElementById("from"), document.getElementById("to")].forEach(e => e.addEventListener("change", onPeriod));
+document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("active", x === b));
+  currentTab = b.dataset.tab;
+  if (data) renderTable();
+}));
+document.getElementById("refresh").addEventListener("click", () => load(true));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => data && (renderCharts(), styleTracks()));
+load();
+setInterval(load, 5 * 60 * 1000);
+</script>
+</body>
+</html>
