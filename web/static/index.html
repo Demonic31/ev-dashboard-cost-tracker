@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>e-208 · Suivi Tempo</title>
+<title>e-208 · Suivi des coûts de recharge</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -12,21 +13,21 @@
     --bg: #f4f6f9; --card: #ffffff; --text: #1d2430; --muted: #6b7585; --border: #e3e7ee;
     --accent: #0f766e; --bleu: #2563eb; --bleu-hc: #1e40af; --blanc: #94a3b8; --blanc-hc: #64748b;
     --rouge: #dc2626; --rouge-hc: #991b1b; --base: #a8a29e; --petrol: #b45309; --good: #15803d; --bad: #b91c1c;
-    --track: #0f766e; --track-sel: #ea580c; --shadow: 0 1px 3px rgba(15, 23, 42, .08); --tiles: none;
+    --track: #0f766e; --track-sel: #ea580c; --shadow: 0 1px 3px rgba(15, 23, 42, .08); --tiles: none; --logo: none;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #0f141b; --card: #171e28; --text: #e6ebf2; --muted: #8a96a8; --border: #263040;
       --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --good: #4ade80; --bad: #f87171;
       --track: #2dd4bf; --track-sel: #fb923c; --shadow: none;
-      --tiles: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9);
+      --tiles: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); --logo: invert(1);
     }
   }
   :root[data-theme="dark"] {
     --bg: #0f141b; --card: #171e28; --text: #e6ebf2; --muted: #8a96a8; --border: #263040;
     --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --good: #4ade80; --bad: #f87171;
     --track: #2dd4bf; --track-sel: #fb923c; --shadow: none;
-    --tiles: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9);
+    --tiles: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); --logo: invert(1);
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
@@ -34,7 +35,8 @@
   main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
   header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px;
            margin-bottom: 16px; }
-  h1 { font-size: 1.5rem; margin: 0; }
+  h1 { font-size: 1.5rem; margin: 0; display: flex; align-items: center; gap: 10px; }
+  h1 .logo { height: 1.9rem; width: auto; filter: var(--logo); }
   h1 span { color: var(--accent); }
   h2 { font-size: 1rem; margin: 0 0 12px; }
   h2 small { color: var(--muted); font-weight: 400; font-size: .8rem; margin-left: 6px; }
@@ -118,7 +120,8 @@
 <body>
 <main>
   <header>
-    <h1>e-208 <span>· Suivi Tempo</span></h1>
+    <h1><img class="logo" src="https://upload.wikimedia.org/wikipedia/fr/9/9d/Peugeot_2021_Logo.svg"
+             alt="Peugeot" referrerpolicy="no-referrer" onerror="this.remove()">e-208 <span>· Suivi des coûts de recharge</span></h1>
     <div class="meta"><span id="fetched">Chargement…</span><button id="refresh" type="button">Actualiser</button></div>
   </header>
   <div class="error" id="error"></div>
