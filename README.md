@@ -86,6 +86,7 @@ docker compose logs -f psacc-sheets-sync
 | `HCHP_HC_PRICE_KWH` / `HCHP_HP_PRICE_KWH` | vide | Prix HC / HP de l'option Heures creuses |
 | `ZEN_LOW_PRICE_KWH` / `ZEN_HIGH_PRICE_KWH` | vide | Prix bas (week-end, fériés, HC semaine) / haut (HP semaine) de Zen Week-End + HC |
 | `PETROL_L_100KM` | vide | Consommation de la voiture thermique de référence (L/100 km) |
+| `BATTERY_KWH` | vide | Capacité de la batterie (kWh) : affiche dans le tableau des recharges les kWh batterie en % de la capacité (vide = pas de %) |
 | `PETROL_FUEL` | `sp98` | Carburant (`sp98`, `sp95`, `e10`, `e85`, `gazole`, `gplc`) |
 | `PETROL_DEPARTEMENT` | vide | Code département pour le prix moyen ; vide = France entière |
 

@@ -36,6 +36,7 @@
   h1 span { color: var(--accent); }
   h2 { font-size: 1rem; margin: 0 0 12px; }
   h2 small { color: var(--muted); font-weight: 400; font-size: .8rem; margin-left: 6px; }
+  td small { color: var(--muted); font-size: .8em; }
   .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 12px; align-items: center; }
   button, select, input { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
            padding: 6px 10px; font: inherit; font-size: .85rem; }
@@ -414,7 +415,7 @@ function renderTable() {
         const parts = r.slice(C.slots, C.slots + 6).map(Number), total = parts.reduce((a, b) => a + (b || 0), 0) || 1;
         const bar = parts.map((p, i) => p > 0 ? `<span style="width:${100 * p / total}%;background:${css(TRANCHE_COLORS[i])}" title="${TRANCHES[i]} : ${fr(p, 2)} kWh"></span>` : "").join("");
         return `<tr><td>${dt(r[C.start])}</td><td>${fr(r[C.duration], 1)} h</td><td>${fr(r[3], 0)} → ${fr(r[4], 0)} %</td>
-          <td>${fr(r[C.kwhBat], 1)}</td><td class="text">${r[C.color] ? `<span class="pill ${esc(r[C.color])}">${esc(r[C.color])}</span>` : "–"}</td>
+          <td>${fr(r[C.kwhBat], 1)}${data.battery_kwh && num(r[C.kwhBat]) ? ` <small>(${fr(100 * num(r[C.kwhBat]) / data.battery_kwh, 0)} %)</small>` : ""}</td><td class="text">${r[C.color] ? `<span class="pill ${esc(r[C.color])}">${esc(r[C.color])}</span>` : "–"}</td>
           <td class="text"><div class="bar">${bar}</div></td><td>${fr(r[C.kwh], 1)}</td><td>${eur(r[C.cost])}</td>
           <td>${eur(r[C.eurKwh], 4)}</td><td>${fr(r[C.km], 0)}</td><td>${eur(r[C.eur100])}</td><td class="note">${esc(r[C.note])}</td></tr>`;
       }).join("")}</tbody></table>`;

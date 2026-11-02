@@ -204,7 +204,7 @@ def offers_config():
             "petrol_l_100km": env_price("PETROL_L_100KM")}
 
 
-def make_handler(mirror, season, fuel, offers):
+def make_handler(mirror, season, fuel, offers, battery_kwh):
     class Handler(BaseHTTPRequestHandler):
         server_version = "e208-dashboard"
 
@@ -227,7 +227,7 @@ def make_handler(mirror, season, fuel, offers):
             elif path == "/api/data":
                 try:
                     force = "refresh=1" in self.path
-                    data = dict(mirror.get(force=force), season=season.get(force=force),
+                    data = dict(mirror.get(force=force), season=season.get(force=force), battery_kwh=battery_kwh,
                                 offers=dict(offers, fuel=fuel.get() if offers["petrol_l_100km"] else None))
                     self.send(200, json.dumps(data, ensure_ascii=False).encode(), "application/json; charset=utf-8")
                 except Exception as exc:  # pylint: disable=broad-except
@@ -252,7 +252,7 @@ def main():
     offers = offers_config()
     port = int(os.environ.get("PORT", "8080"))
     log.info("front e-208 sur le port %d (comparatif : %s)", port, json.dumps(offers))
-    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, offers)).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, offers, env_price("BATTERY_KWH"))).serve_forever()
 
 
 if __name__ == "__main__":
