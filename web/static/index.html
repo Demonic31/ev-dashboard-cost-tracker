@@ -506,7 +506,10 @@ function toggleCurve(tr) {
 
 function drawCurve(key, canvas, hint, r, { real, pts }) {
   const hour = 36e5, span = pts.at(-1).x - pts[0].x, step = span > 12 * hour ? 2 * hour : hour;
-  const xmin = Math.floor((pts[0].x - hour / 2) / hour) * hour, xmax = Math.ceil((pts.at(-1).x + hour / 2) / hour) * hour;
+  // Bornes sur des heures pleines (paires si pas de 2 h), graduations posées à la main pour rester alignées
+  let xmin = Math.floor((pts[0].x - hour / 2) / hour) * hour;
+  if (step > hour && new Date(xmin).getHours() % 2) xmin -= hour;
+  const xmax = Math.ceil((pts.at(-1).x + hour / 2 - xmin) / step) * step + xmin;
   const ymin = Math.max(0, Math.floor((Math.min(...pts.map(p => p.y)) - 5) / 10) * 10);
   const hhmm = x => new Date(x).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
   const kw = (a, b) => data.battery_kwh ? (b.y - a.y) / 100 * data.battery_kwh / ((b.x - a.x) / hour) : null;
@@ -534,7 +537,8 @@ function drawCurve(key, canvas, hint, r, { real, pts }) {
       segment: { borderDash: () => [6, 4] } }] },
     options: { maintainAspectRatio: false, animation: false, parsing: false,
       interaction: { mode: "nearest", intersect: false },
-      scales: { x: { type: "linear", min: xmin, max: xmax, ticks: { stepSize: step, callback: v => new Date(v).getHours() + "h" } },
+      scales: { x: { type: "linear", min: xmin, max: xmax, ticks: { callback: v => new Date(v).getHours() + "h" },
+                   afterBuildTicks: ax => { ax.ticks = []; for (let t = xmin; t <= xmax; t += step) ax.ticks.push({ value: t }); } },
                 y: { min: ymin, max: 100, ticks: { callback: v => v + " %" } } },
       plugins: { legend: { display: false },
         tooltip: { callbacks: {
