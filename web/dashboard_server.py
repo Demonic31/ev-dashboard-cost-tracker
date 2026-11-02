@@ -9,8 +9,10 @@ En complément : la saison Tempo en cours (api-couleur-tempo.fr, comme la synchr
 des offres (prix des autres options EDF, prix moyen du carburant sur data.economie.gouv.fr).
 
 Mire de connexion facultative : un mot de passe unique dont l'empreinte (scrypt) est fournie au conteneur
-(DASHBOARD_PASSWORD_HASH, générée avec --hash-password).
+(DASHBOARD_PASSWORD_HASH, générée avec --hash-password), complété si besoin d'un code TOTP à 6 chiffres
+d'application d'authentification (DASHBOARD_TOTP_SECRET, généré avec --setup-totp).
 """
+import base64
 import getpass
 import hashlib
 import hmac
@@ -27,7 +29,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote
 
 import requests
 from google.auth.transport.requests import AuthorizedSession
@@ -333,20 +335,31 @@ def hash_password(password, n=2 ** 15, r=8, p=1):
     return f"scrypt:{n}:{r}:{p}:{salt.hex()}:{key.hex()}"
 
 
+def totp_code(secret, step):
+    """Code TOTP (RFC 6238 : HMAC-SHA1, 6 chiffres) de la tranche de 30 s numéro `step`."""
+    key = base64.b32decode(secret.upper() + "=" * (-len(secret) % 8))
+    digest = hmac.new(key, step.to_bytes(8, "big"), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    return f"{(int.from_bytes(digest[offset:offset + 4], 'big') & 0x7FFFFFFF) % 1_000_000:06d}"
+
+
 class PasswordGate:
     """Mire de connexion à mot de passe unique.
 
     Désactivée si aucune empreinte n'est fournie. Sinon, la connexion est exigée pour les requêtes qui passent par
     le reverse proxy (TRUSTED_PROXY), ou pour toutes si LOGIN_SCOPE=all ou si le proxy n'est pas renseigné.
     La session est un cookie signé (HMAC) qui porte son expiration ; changer le mot de passe invalide les sessions.
+    Avec une clé TOTP, un code d'application d'authentification est aussi demandé (tranche de 30 s en cours,
+    précédente ou suivante ; un code déjà utilisé est refusé).
     Après MAX_FAILURES échecs en BLOCK_SECONDS, l'IP du visiteur (X-Real-IP posé par le proxy) est bloquée."""
 
     COOKIE = "e208_session"
     MAX_FAILURES, BLOCK_SECONDS = 5, 15 * 60
     SESSION_SECONDS, REMEMBER_SECONDS = 12 * 3600, 30 * 86400
 
-    def __init__(self, password_hash, secret, trusted_proxy, scope):
+    def __init__(self, password_hash, secret, trusted_proxy, scope, totp_secret=""):
         self.enabled = bool(password_hash)
+        self.totp_secret, self.last_totp_step = totp_secret.replace(" ", "").upper(), 0
         self.trusted_proxy, self.scope = trusted_proxy, scope
         self.failures, self.lock = {}, threading.Lock()
         if not self.enabled:
@@ -356,7 +369,8 @@ class PasswordGate:
         if not secret:
             log.warning("SESSION_SECRET absent : clé aléatoire, les sessions ne survivront pas au redémarrage")
         self.secret = (secret or secrets.token_hex(32)).encode()
-        self.fingerprint = hashlib.sha256(password_hash.encode()).hexdigest()[:16]
+        # changer le mot de passe ou la clé TOTP invalide les sessions existantes
+        self.fingerprint = hashlib.sha256(f"{password_hash}|{self.totp_secret}".encode()).hexdigest()[:16]
 
     def via_proxy(self, addr):
         return bool(self.trusted_proxy) and addr == self.trusted_proxy
@@ -376,6 +390,18 @@ class PasswordGate:
         key = hashlib.scrypt(password.encode(), salt=self.salt, n=n, r=r, p=p, maxmem=64 * 1024 * 1024,
                              dklen=len(self.key))
         return hmac.compare_digest(key, self.key)
+
+    def check_code(self, code):
+        """Code TOTP valable et pas encore utilisé (toujours vrai sans clé TOTP)."""
+        if not self.totp_secret:
+            return True
+        code, now = code.replace(" ", ""), int(time.time() // 30)
+        with self.lock:
+            for step in (now - 1, now, now + 1):
+                if step > self.last_totp_step and hmac.compare_digest(totp_code(self.totp_secret, step), code):
+                    self.last_totp_step = step
+                    return True
+        return False
 
     def blocked_for(self, ip):
         """Secondes de blocage restantes pour cette IP (0 si elle peut essayer)."""
@@ -413,11 +439,18 @@ class PasswordGate:
         return expiry.isdigit() and int(expiry) > time.time() and hmac.compare_digest(sig, self.sign(int(expiry)))
 
 
-def login_page(message=""):
+TOTP_FIELD = """<label>Code de l'application d'authentification
+    <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"
+           placeholder="123456" required>
+  </label>"""
+
+
+def login_page(message="", totp=False):
     with open(os.path.join(STATIC_DIR, "login.html"), encoding="utf-8") as f:
         html = f.read()
     esc = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return html.replace("{{message}}", f'<p class="error">{esc}</p>' if message else "").encode()
+    return html.replace("{{message}}", f'<p class="error">{esc}</p>' if message else "") \
+        .replace("{{totp}}", TOTP_FIELD if totp else "").encode()
 
 
 def make_handler(mirror, season, fuel, offers, battery_kwh, health, car, curves, gate):
@@ -458,19 +491,21 @@ def make_handler(mirror, season, fuel, offers, battery_kwh, health, car, curves,
             ip = gate.client_ip(addr, self.headers)
             wait = gate.blocked_for(ip)
             if wait:
-                self.send(429, login_page(f"Trop d'essais : réessaie dans {wait // 60 + 1} min."), "text/html; charset=utf-8")
+                self.send(429, login_page(f"Trop d'essais : réessaie dans {wait // 60 + 1} min.", bool(gate.totp_secret)), "text/html; charset=utf-8")
                 return
             length = int(self.headers.get("Content-Length") or 0)
             form = parse_qs(self.rfile.read(min(length, 4096)).decode(errors="replace")) if length <= 4096 else {}
-            ok = gate.check(form.get("password", [""])[0])
+            # le code n'est vérifié (et consommé) qu'avec le bon mot de passe
+            ok = gate.check(form.get("password", [""])[0]) and gate.check_code(form.get("code", [""])[0])
             gate.record(ip, ok)
             if ok:
                 log.info("connexion réussie depuis %s", ip)
                 self.redirect("/", gate.cookie(form.get("remember") == ["1"], gate.via_proxy(addr)))
             else:
-                log.warning("mot de passe refusé depuis %s", ip)
+                log.warning("mot de passe%s refusé depuis %s", " ou code" if gate.totp_secret else "", ip)
                 time.sleep(1)
-                self.send(401, login_page("Mot de passe incorrect."), "text/html; charset=utf-8")
+                self.send(401, login_page("Mot de passe ou code incorrect." if gate.totp_secret else "Mot de passe incorrect.",
+                                               bool(gate.totp_secret)), "text/html; charset=utf-8")
 
         def do_GET(self):  # noqa: N802
             path = self.path.split("?")[0]
@@ -482,7 +517,7 @@ def make_handler(mirror, season, fuel, offers, battery_kwh, health, car, curves,
                 if authed:
                     self.redirect("/")
                 else:
-                    self.send(200, login_page(), "text/html; charset=utf-8")
+                    self.send(200, login_page(totp=bool(gate.totp_secret)), "text/html; charset=utf-8")
             elif path == "/logout":
                 self.redirect("/login", gate.clear_cookie(gate.via_proxy(addr)))
             elif not authed and path not in ("/healthz", "/static/theme.js", "/static/vendor/peugeot-logo.svg"):
@@ -531,9 +566,36 @@ def prompt_hash():
     print(f"DASHBOARD_PASSWORD_HASH={hash_password(password)}")
 
 
+def setup_totp():
+    """--setup-totp : génère une clé TOTP, affiche son QR code (sur stderr), vérifie un code puis imprime la ligne
+    à mettre dans .env (sur stdout, seule : elle peut être capturée par la commande appelante)."""
+    import segno  # pylint: disable=import-outside-toplevel  (utile seulement ici)
+    secret = base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+    label = "Dashboard e-208"
+    uri = f"otpauth://totp/{quote(label)}?secret={secret}&issuer={quote(label)}&digits=6&period=30&algorithm=SHA1"
+    err = sys.stderr
+    err.write("\nScanne ce QR code avec l'application d'authentification :\n")
+    segno.make(uri, error="m").terminal(out=err, compact=True)
+    err.write(f"\nOu saisis la clé à la main : {' '.join(secret[i:i + 4] for i in range(0, len(secret), 4))}\n\n")
+    for _ in range(3):
+        err.write("Code affiché par l'application (6 chiffres) : ")
+        err.flush()
+        code = sys.stdin.readline().strip().replace(" ", "")
+        now = int(time.time() // 30)
+        if any(hmac.compare_digest(totp_code(secret, s), code) for s in (now - 1, now, now + 1)):
+            err.write("Code correct.\n")
+            print(f"DASHBOARD_TOTP_SECRET={secret}")
+            return
+        err.write("Code incorrect, réessaie.\n")
+    sys.exit("Trois codes incorrects : vérifie l'heure du téléphone et relance la commande.")
+
+
 def main():
     if "--hash-password" in sys.argv:
         prompt_hash()
+        return
+    if "--setup-totp" in sys.argv:
+        setup_totp()
         return
     logging.basicConfig(level=logging.DEBUG if os.environ.get("DEBUG") else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s", stream=sys.stdout)
@@ -547,10 +609,12 @@ def main():
     health, car = BatteryHealth(psacc), CarStatus(psacc)
     curves = ChargeCurves(psacc, os.environ.get("PSACC_CONFIG", "/config"))
     gate = PasswordGate(os.environ.get("DASHBOARD_PASSWORD_HASH", "").strip(), os.environ.get("SESSION_SECRET", "").strip(),
-                        os.environ.get("TRUSTED_PROXY", "").strip(), os.environ.get("LOGIN_SCOPE", "proxy").strip())
+                        os.environ.get("TRUSTED_PROXY", "").strip(), os.environ.get("LOGIN_SCOPE", "proxy").strip(),
+                        os.environ.get("DASHBOARD_TOTP_SECRET", "").strip())
     if gate.enabled:
-        log.info("mire de connexion active (%s)", "toutes les requêtes" if gate.scope == "all" or not gate.trusted_proxy
-                 else f"requêtes venant du proxy {gate.trusted_proxy}")
+        scope = "toutes les requêtes" if gate.scope == "all" or not gate.trusted_proxy \
+            else f"requêtes venant du proxy {gate.trusted_proxy}"
+        log.info("mire de connexion active%s (%s)", " avec code TOTP" if gate.totp_secret else "", scope)
     port = int(os.environ.get("PORT", "8080"))
     log.info("front e-208 sur le port %d (comparatif : %s)", port, json.dumps(offers))
     ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, offers, env_price("BATTERY_KWH"), health, car, curves, gate)).serve_forever()

@@ -30,9 +30,9 @@
   h1 { font-size: 1.3rem; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
   h1 img { height: 1.7rem; filter: var(--logo); }
   label { display: grid; gap: 6px; color: var(--muted); font-size: .85rem; }
-  input[type=password] { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border);
-                         border-radius: 8px; padding: 9px 11px; }
-  input[type=password]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input[type=password], input[name=code] { font: inherit; color: var(--text); background: var(--bg);
+                                          border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }
+  input[type=password]:focus, input[name=code]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   .remember { display: flex; gap: 8px; align-items: center; color: var(--text); font-size: .9rem; }
   button { font: inherit; font-weight: 600; color: var(--card); background: var(--accent); border: 0; border-radius: 8px;
            padding: 10px; cursor: pointer; }
@@ -46,6 +46,7 @@
   <label>Mot de passe
     <input type="password" name="password" autocomplete="current-password" required autofocus>
   </label>
+  {{totp}}
   <label class="remember"><input type="checkbox" name="remember" value="1"> Se souvenir de moi (30 jours)</label>
   <button type="submit">Se connecter</button>
 </form>

@@ -135,6 +135,7 @@ Le dashboard peut demander un **mot de passe unique**, défini au niveau du cont
 | Variable | Défaut | Rôle |
 | :--- | :--- | :--- |
 | `DASHBOARD_PASSWORD_HASH` | vide | Empreinte **scrypt** du mot de passe (le mot de passe en clair n'est stocké nulle part). Vide = pas de mire. La changer déconnecte toutes les sessions. |
+| `DASHBOARD_TOTP_SECRET` | vide | Clé TOTP : un code à 6 chiffres d'application d'authentification (Aegis, 2FAS, Google Authenticator…) est demandé après le mot de passe. Vide = mot de passe seul. La changer déconnecte toutes les sessions. |
 | `SESSION_SECRET` | vide | Clé de signature des sessions (`openssl rand -hex 32`) ; vide = clé aléatoire, sessions perdues à chaque redémarrage |
 | `TRUSTED_PROXY` | vide | IP LAN du Synology : seules ses requêtes sont considérées comme venant d'Internet, et leur en-tête `X-Real-IP` (IP réelle du visiteur) est cru |
 | `LOGIN_SCOPE` | `proxy` | `proxy` : mot de passe pour les accès via le Synology, accès LAN direct libre ; `all` : partout. Tant que `TRUSTED_PROXY` est vide, le mot de passe est demandé partout. |
@@ -145,8 +146,15 @@ Générer l'empreinte (le mot de passe est demandé sans être affiché, 12 cara
 docker compose run --rm e208-dashboard --hash-password
 ```
 
+Enrôler l'application d'authentification : la commande affiche un QR code (et la clé à saisir à la main), demande un code pour vérifier, puis met la clé dans `.env` :
+
+```bash
+L=$(docker compose run --rm -T e208-dashboard --setup-totp | grep '^DASHBOARD_TOTP_SECRET=') && sed -i "s|^DASHBOARD_TOTP_SECRET=.*|$L|" .env && docker compose up -d e208-dashboard
+```
+
+* **Code TOTP** (RFC 6238, 30 s) : accepté pour la tranche en cours, la précédente ou la suivante (décalage d'horloge) ; un code déjà utilisé est refusé ; il n'est vérifié qu'avec le bon mot de passe. La clé ne peut pas être hachée (le serveur en a besoin pour calculer les codes) : elle reste dans `.env`, jamais dans git. Téléphone perdu : relancer `--setup-totp` depuis le serveur.
 * **Session** : cookie signé (HMAC), `HttpOnly`, `SameSite=Strict`, `Secure` derrière le Synology ; 12 h, ou 30 jours avec « Se souvenir de moi ». Lien « Déconnexion » dans l'en-tête.
-* **Anti-brute-force** : après 5 échecs en 15 min, l'IP du visiteur est bloquée 15 min ; comparaison en temps constant et 1 s d'attente par échec. Les tentatives sont journalisées (`docker logs`).
+* **Anti-brute-force** (mot de passe ou code) : après 5 échecs en 15 min, l'IP du visiteur est bloquée 15 min ; comparaison en temps constant et 1 s d'attente par échec. Les tentatives sont journalisées (`docker logs`).
 * **Synology** (DSM → Portail de connexion → Avancé → Proxy inversé → Créer) : source HTTPS `<nom>` port 443 avec HSTS, destination HTTP `<LAN_IP>` port du dashboard ; onglet En-tête personnalisé : `X-Real-IP` = `$remote_addr` et `X-Forwarded-Proto` = `$scheme`. Certificat Let's Encrypt pour `<nom>` dans Sécurité → Certificat → Ajouter, puis **Paramètres** pour l'associer à la règle (sinon le Synology présente son certificat auto-signé). Facultatif : pour qu'une adresse tapée sans `https://` aboutisse, une seconde règle avec la source **HTTP** port 80 et la même destination ; le dashboard renvoie alors vers HTTPS (redirection 301), sans jamais servir la page en clair. À n'ajouter qu'après l'obtention du certificat, et à vérifier au premier renouvellement Let's Encrypt (qui passe aussi par le port 80). Sans elle, HSTS fait passer le navigateur en HTTPS dès la première visite.
 
 ### 🧪 PREPROD
