@@ -86,6 +86,7 @@ docker compose logs -f psacc-sheets-sync
 | `HCHP_HC_PRICE_KWH` / `HCHP_HP_PRICE_KWH` | vide | Prix HC / HP de l'option Heures creuses |
 | `ZEN_LOW_PRICE_KWH` / `ZEN_HIGH_PRICE_KWH` | vide | Prix bas (week-end, fériés, HC semaine) / haut (HP semaine) de Zen Week-End + HC |
 | `PETROL_L_100KM` | vide | Consommation de la voiture thermique de référence (L/100 km) |
+| `PSACC_URL` | `http://psacc:5000` | API web de psacc pour le SOH (fixée dans `docker-compose.yml`) |
 | `BATTERY_KWH` | vide | Capacité de la batterie (kWh) : affiche dans le tableau des recharges les kWh batterie en % de la capacité (vide = pas de %) |
 | `PETROL_FUEL` | `sp98` | Carburant (`sp98`, `sp95`, `e10`, `e85`, `gazole`, `gplc`) |
 | `PETROL_DEPARTEMENT` | vide | Code département pour le prix moyen ; vide = France entière |
@@ -99,6 +100,7 @@ docker compose up -d --build e208-dashboard
 Puis ouvrir `http://<LAN_IP>:8080`. La page affiche ce que le Sheet a calculé, sans rien recalculer de son côté :
 
 * **Indicateurs, coût par mois, énergie par tranche** : en période « Tout », ce sont les valeurs du `Dashboard` ; pour une autre période (saison Tempo, 12 derniers mois, mois, dates libres), les mêmes formules sont appliquées aux lignes de `Recharges` et `Trajets` de la période. La période choisie est mémorisée dans le navigateur.
+* **Santé batterie (SOH)**, en haut de page : dernier SOH relevé par psacc (champ « resistance » de l'API Stellantis, qui ne mesure pas forcément la capacité restante), lu sur l'API web de psacc par le réseau Docker interne (`/get_vehicles` et `/battery/soh/<VIN>`, lecture seule, sans appel à Stellantis), relu toutes les heures.
 * **Saison Tempo** (1er septembre → 31 août) : jours blancs, rouges et bleus restants, couleur du lendemain et calendrier de la saison, depuis [api-couleur-tempo.fr](https://www.api-couleur-tempo.fr) (cache d'une heure).
 * **Comparatif des offres**, pour la même énergie (kWh facturés de la période) et hors abonnements. Une offre dont le prix n'est pas renseigné est signalée « à renseigner » :
   * **Tempo** : ton coût réel, calculé par le Sheet ;

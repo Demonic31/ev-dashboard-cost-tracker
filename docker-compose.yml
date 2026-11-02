@@ -48,6 +48,8 @@ services:
       ZEN_HIGH_PRICE_KWH: ${ZEN_HIGH_PRICE_KWH:-}
       PETROL_L_100KM: ${PETROL_L_100KM:-}
       BATTERY_KWH: ${BATTERY_KWH:-}
+      # SOH lu sur l'API web de psacc (réseau Docker interne)
+      PSACC_URL: http://psacc:5000
       PETROL_FUEL: ${PETROL_FUEL:-sp98}
       PETROL_DEPARTEMENT: ${PETROL_DEPARTEMENT:-}
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-sa

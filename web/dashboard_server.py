@@ -161,6 +161,29 @@ FUEL_API = ("https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/"
             "prix-des-carburants-en-france-flux-instantane-v2/records")
 
 
+class BatteryHealth:
+    """SOH de la batterie relevé par psacc (champ « resistance » de l'API Stellantis), lu sur son API web
+    (lecture seule : /get_vehicles et /battery/soh, sans appel à Stellantis)."""
+
+    def __init__(self, psacc_url, vin):
+        self.psacc_url, self.vin = psacc_url.rstrip("/"), vin
+
+    @cached(3600)
+    def get(self):
+        try:
+            vin = self.vin
+            if not vin:
+                cars = requests.get(f"{self.psacc_url}/get_vehicles", timeout=10).json()
+                vin = next(c["vin"] for c in cars if (c.get("battery_power") or 0) > 0)
+            soh = requests.get(f"{self.psacc_url}/battery/soh/{vin}", timeout=10).json().get("soh")
+            if soh is None:
+                return {"error": "aucun SOH relevé par psacc"}
+            return {"soh": soh, "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds")}
+        except (requests.RequestException, ValueError, StopIteration) as exc:
+            log.warning("SOH indisponible : %s", exc)
+            return {"error": str(exc) or type(exc).__name__}
+
+
 class FuelPrice:
     """Prix moyen d'un carburant (stations mises à jour ces `days` derniers jours), France ou un département."""
 
@@ -204,7 +227,7 @@ def offers_config():
             "petrol_l_100km": env_price("PETROL_L_100KM")}
 
 
-def make_handler(mirror, season, fuel, offers, battery_kwh):
+def make_handler(mirror, season, fuel, offers, battery_kwh, health):
     class Handler(BaseHTTPRequestHandler):
         server_version = "e208-dashboard"
 
@@ -228,6 +251,7 @@ def make_handler(mirror, season, fuel, offers, battery_kwh):
                 try:
                     force = "refresh=1" in self.path
                     data = dict(mirror.get(force=force), season=season.get(force=force), battery_kwh=battery_kwh,
+                                health=health.get(force=force),
                                 offers=dict(offers, fuel=fuel.get() if offers["petrol_l_100km"] else None))
                     self.send(200, json.dumps(data, ensure_ascii=False).encode(), "application/json; charset=utf-8")
                 except Exception as exc:  # pylint: disable=broad-except
@@ -250,9 +274,10 @@ def main():
     season = TempoSeason(os.environ.get("TEMPO_API_URL", "https://www.api-couleur-tempo.fr/api"))
     fuel = FuelPrice(os.environ.get("PETROL_FUEL", "sp98"), os.environ.get("PETROL_DEPARTEMENT", "").strip())
     offers = offers_config()
+    health = BatteryHealth(os.environ.get("PSACC_URL", "http://psacc:5000"), os.environ.get("VIN") or None)
     port = int(os.environ.get("PORT", "8080"))
     log.info("front e-208 sur le port %d (comparatif : %s)", port, json.dumps(offers))
-    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, offers, env_price("BATTERY_KWH"))).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, offers, env_price("BATTERY_KWH"), health)).serve_forever()
 
 
 if __name__ == "__main__":
