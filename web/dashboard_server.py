@@ -38,7 +38,10 @@ from google.oauth2 import service_account
 SHEET_EPOCH = datetime(1899, 12, 30)
 COLORS = {1: "BLEU", 2: "BLANC", 3: "ROUGE"}
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-STATIC_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}
+# Accessibles sans connexion : ce dont la page de connexion a besoin
+PUBLIC_PATHS = ("/healthz", "/static/theme.js", "/static/login.js", "/static/favicon.svg", "/static/apple-touch-icon.png")
+STATIC_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml",
+                ".png": "image/png"}
 # Tout est servi depuis le conteneur (Chart.js et logo compris) : pas de script ni de ressource externe
 SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
@@ -520,7 +523,7 @@ def make_handler(mirror, season, fuel, offers, battery_kwh, health, car, curves,
                     self.send(200, login_page(totp=bool(gate.totp_secret)), "text/html; charset=utf-8")
             elif path == "/logout":
                 self.redirect("/login", gate.clear_cookie(gate.via_proxy(addr)))
-            elif not authed and path not in ("/healthz", "/static/theme.js", "/static/vendor/peugeot-logo.svg"):
+            elif not authed and path not in PUBLIC_PATHS:
                 if path.startswith("/api/"):
                     self.send(401, b'{"error": "connexion requise"}', "application/json")
                 else:
