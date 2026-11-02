@@ -56,6 +56,12 @@ services:
       PETROL_FUEL: ${PETROL_FUEL:-sp98}
       PETROL_DEPARTEMENT: ${PETROL_DEPARTEMENT:-}
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-sa
+      # Mire de connexion (accès distant via le reverse proxy Synology) ; vide = pas de mire
+      DASHBOARD_PASSWORD_HASH: ${DASHBOARD_PASSWORD_HASH:-}
+      DASHBOARD_TOTP_SECRET: ${DASHBOARD_TOTP_SECRET:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      TRUSTED_PROXY: ${TRUSTED_PROXY:-}
+      LOGIN_SCOPE: ${LOGIN_SCOPE:-proxy}
     volumes:
       # Base psacc en lecture seule, copiée avant lecture (courbes de charge)
       - ./psacc/config:/config:ro

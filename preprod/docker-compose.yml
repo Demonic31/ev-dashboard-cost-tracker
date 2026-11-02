@@ -1,0 +1,39 @@
+# PREPROD du dashboard : même code que web/, lancé à côté de la PROD pour tester (mire de connexion, etc.).
+# Lecture seule : Sheet, base et API psacc de la pile principale ; ni synchro ni réveil.
+# Lancement : docker compose --env-file preprod/.env -f preprod/docker-compose.yml up -d --build
+name: e208-preprod
+
+services:
+  e208-dashboard:
+    build: ../web
+    image: e208-preprod-dashboard:local
+    restart: unless-stopped
+    # Réglages de la pile principale (Sheet, prix, batterie), puis ceux propres à la PREPROD
+    env_file: ${MAIN_ENV_FILE:?MAIN_ENV_FILE manquant dans preprod/.env}
+    environment:
+      TZ: Europe/Paris
+      CACHE_SECONDS: "300"
+      PSACC_URL: http://psacc:5000
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-sa
+      DASHBOARD_PASSWORD_HASH: ${DASHBOARD_PASSWORD_HASH:-}
+      DASHBOARD_TOTP_SECRET: ${DASHBOARD_TOTP_SECRET:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      TRUSTED_PROXY: ${TRUSTED_PROXY:-}
+      LOGIN_SCOPE: ${LOGIN_SCOPE:-proxy}
+    ports:
+      # Lié à l'IP LAN uniquement : le reverse proxy Synology vient le chercher ici
+      - "${LAN_IP:?LAN_IP manquant}:${PREPROD_PORT:-8081}:8080"
+    volumes:
+      - ${PSACC_CONFIG_DIR:?PSACC_CONFIG_DIR manquant}:/config:ro
+    secrets: [google-sa]
+    networks: [psacc]
+
+networks:
+  # Réseau de la pile principale, pour lire l'API de psacc
+  psacc:
+    external: true
+    name: ${PSACC_NETWORK:-208-cost-tracker_default}
+
+secrets:
+  google-sa:
+    file: ${GOOGLE_SA_FILE:?GOOGLE_SA_FILE manquant}

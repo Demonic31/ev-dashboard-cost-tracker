@@ -3,3 +3,4 @@ secrets/
 psacc/config/
 __pycache__/
 *.pyc
+preprod/.env

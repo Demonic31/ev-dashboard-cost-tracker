@@ -116,7 +116,7 @@ Puis ouvrir `http://<LAN_IP>:8080`. La page affiche ce que le Sheet a calculé, 
 * **Trajets par mois**, dans le tableau des trajets : une ligne par mois (du plus récent au plus ancien) avec le nombre de trajets, les km, les kWh, le kWh/100 km et le dernier compteur ; un clic déplie les trajets du mois (replié par défaut).
 * **Recharges par mois**, dans le tableau des recharges : une ligne par mois avec le nombre de recharges, les kWh batterie et compteur, la répartition HC/HP, le coût, le €/kWh, les km et le €/100 km ; un clic déplie les recharges du mois (replié par défaut).
 * **Courbe de charge**, dans le tableau des recharges : un clic sur une recharge déplie le graphique du niveau de batterie selon l'heure, heures creuses en fond (replié par défaut). Les points viennent de la table `battery_curve` de psacc, lue sur une copie de `info.db` (`psacc/config` monté en lecture seule, relu toutes les 5 min). La voiture n'envoie que 2 ou 3 points par charge lente (début, ~45 min, fin), donc la courbe est interpolée entre eux. Une recharge saisie à la main est tracée en droite du début à la fin. Le survol donne la puissance moyenne entre deux points (si `BATTERY_KWH` est renseigné).
-* **Saison Tempo** (1er septembre → 31 août) : jours blancs, rouges et bleus restants, couleur du lendemain et calendrier de la saison, depuis [api-couleur-tempo.fr](https://www.api-couleur-tempo.fr) (cache d'une heure).
+* **Saison Tempo** (1er septembre → 31 août) : jours blancs, rouges et bleus restants, couleur du lendemain et calendrier de la saison (replié par défaut, un clic le déplie), depuis [api-couleur-tempo.fr](https://www.api-couleur-tempo.fr) (cache d'une heure).
 * **Comparatif des offres**, pour la même énergie (kWh facturés de la période) et hors abonnements. Une offre dont le prix n'est pas renseigné est signalée « à renseigner » :
   * **Tempo** : ton coût réel, calculé par le Sheet ;
   * **Base** : kWh × `BASE_PRICE_KWH` ;
@@ -125,6 +125,46 @@ Puis ouvrir `http://<LAN_IP>:8080`. La page affiche ce que le Sheet a calculé, 
   * **Essence** : km parcourus (le plus grand entre les trajets enregistrés et le compteur entre recharges) × `PETROL_L_100KM` × prix moyen du carburant. Ce prix est la moyenne des stations mises à jour ces 3 derniers jours, en France ou dans un département, d'après les [données officielles prix-carburants](https://data.economie.gouv.fr/explore/dataset/prix-des-carburants-en-france-flux-instantane-v2/), relues une fois par semaine (et au redémarrage du conteneur ; le bouton 🔄 « Actualiser » ne les relit pas).
 
 Le serveur relit le Sheet au plus toutes les `DASHBOARD_CACHE_SECONDS`. Le bouton 🔄 (Actualiser) force la relecture. Le compte de service n'y a qu'un accès en lecture.
+
+Tout est servi par le conteneur (Chart.js et logo compris, dans `web/static/vendor/`), avec une politique de sécurité stricte (`Content-Security-Policy` sans script externe ni inline, `X-Frame-Options: DENY`, `nosniff`).
+
+### 🔐 Mire de connexion et accès distant
+
+Le dashboard peut demander un **mot de passe unique**, défini au niveau du conteneur, pour être publié sur Internet derrière le reverse proxy du Synology (qui gère le 443 et le certificat HTTPS).
+
+| Variable | Défaut | Rôle |
+| :--- | :--- | :--- |
+| `DASHBOARD_PASSWORD_HASH` | vide | Empreinte **scrypt** du mot de passe (le mot de passe en clair n'est stocké nulle part). Vide = pas de mire. La changer déconnecte toutes les sessions. |
+| `DASHBOARD_TOTP_SECRET` | vide | Clé TOTP : un code à 6 chiffres d'application d'authentification (Aegis, 2FAS, Google Authenticator…) est demandé après le mot de passe. Vide = mot de passe seul. La changer déconnecte toutes les sessions. |
+| `SESSION_SECRET` | vide | Clé de signature des sessions (`openssl rand -hex 32`) ; vide = clé aléatoire, sessions perdues à chaque redémarrage |
+| `TRUSTED_PROXY` | vide | IP LAN du Synology : seules ses requêtes sont considérées comme venant d'Internet, et leur en-tête `X-Real-IP` (IP réelle du visiteur) est cru |
+| `LOGIN_SCOPE` | `proxy` | `proxy` : mot de passe pour les accès via le Synology, accès LAN direct libre ; `all` : partout. Tant que `TRUSTED_PROXY` est vide, le mot de passe est demandé partout. |
+
+Générer l'empreinte (le mot de passe est demandé sans être affiché, 12 caractères minimum) :
+
+```bash
+docker compose run --rm e208-dashboard --hash-password
+```
+
+Enrôler l'application d'authentification : la commande affiche un QR code (et la clé à saisir à la main), demande un code pour vérifier, puis met la clé dans `.env` :
+
+```bash
+L=$(docker compose run --rm -T e208-dashboard --setup-totp | grep '^DASHBOARD_TOTP_SECRET=') && sed -i "s|^DASHBOARD_TOTP_SECRET=.*|$L|" .env && docker compose up -d e208-dashboard
+```
+
+* **Code TOTP** (RFC 6238, 30 s) : accepté pour la tranche en cours, la précédente ou la suivante (décalage d'horloge) ; un code déjà utilisé est refusé ; il n'est vérifié qu'avec le bon mot de passe. La clé ne peut pas être hachée (le serveur en a besoin pour calculer les codes) : elle reste dans `.env`, jamais dans git. Téléphone perdu : relancer `--setup-totp` depuis le serveur.
+* **Session** : cookie signé (HMAC), `HttpOnly`, `SameSite=Strict`, `Secure` derrière le Synology ; 12 h, ou 30 jours avec « Se souvenir de moi ». Lien « Déconnexion » dans l'en-tête.
+* **Anti-brute-force** (mot de passe ou code) : après 5 échecs en 15 min, l'IP du visiteur est bloquée 15 min ; comparaison en temps constant et 1 s d'attente par échec. Les tentatives sont journalisées (`docker logs`).
+* **Synology** (DSM → Portail de connexion → Avancé → Proxy inversé → Créer) : source HTTPS `<nom>` port 443 avec HSTS, destination HTTP `<LAN_IP>` port du dashboard ; onglet En-tête personnalisé : `X-Real-IP` = `$remote_addr` et `X-Forwarded-Proto` = `$scheme`. Certificat Let's Encrypt pour `<nom>` dans Sécurité → Certificat → Ajouter, puis **Paramètres** pour l'associer à la règle (sinon le Synology présente son certificat auto-signé). Facultatif : pour qu'une adresse tapée sans `https://` aboutisse, une seconde règle avec la source **HTTP** port 80 et la même destination ; le dashboard renvoie alors vers HTTPS (redirection 301), sans jamais servir la page en clair. À n'ajouter qu'après l'obtention du certificat, et à vérifier au premier renouvellement Let's Encrypt (qui passe aussi par le port 80). Sans elle, HSTS fait passer le navigateur en HTTPS dès la première visite.
+
+### 🧪 PREPROD
+
+[`preprod/docker-compose.yml`](preprod/docker-compose.yml) lance un second dashboard (projet `e208-preprod`, port `8081` sur l'IP LAN) avec le code de la branche en cours, pour tester sans toucher à la PROD. Il lit le même Sheet et la base et l'API psacc de la pile principale, en lecture seule, sans synchro ni réveil.
+
+```bash
+cp preprod/.env.example preprod/.env && chmod 600 preprod/.env   # chemins de la pile principale, mot de passe, Synology
+docker compose --env-file preprod/.env -f preprod/docker-compose.yml up -d --build
+```
 
 ## 🔄 Mise à jour
 
@@ -162,5 +202,5 @@ Les données déjà enregistrées sont conservées ; rien à faire côté synchr
 
 * `.env`, `secrets/` et `psacc/config/` (jetons Stellantis, VIN, positions GPS) sont exclus de git.
 * La clé Google est montée en *secret* Docker en lecture seule ; la synchro tourne en utilisateur non root et monte la config psacc en lecture seule.
-* Le front (port 8080) n'est publié que sur l'IP locale, comme psacc.
+* Le front (port 8080) n'est publié que sur l'IP locale, comme psacc ; pour un accès depuis Internet, il passe par le reverse proxy du Synology et la mire de connexion.
 * Le port 5000 n'est publié que sur l'IP locale : ne pas l'exposer sur Internet (l'interface permet de piloter la voiture).
