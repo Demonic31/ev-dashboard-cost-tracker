@@ -129,7 +129,10 @@
   tr.fold { cursor: pointer; }
   tr.fold:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
   .chev { display: inline-block; width: 1em; color: var(--muted); transition: transform .15s; }
-  tr.fold[aria-expanded="true"] .chev { transform: rotate(90deg); }
+  tr.fold[aria-expanded="true"] .chev, details.cal[open] .chev { transform: rotate(90deg); }
+  details.cal summary { cursor: pointer; list-style: none; font-size: .85rem; font-weight: 600; user-select: none; }
+  details.cal summary::-webkit-details-marker { display: none; }
+  details.cal[open] summary { margin-bottom: 10px; }
   tr.month-row td { font-weight: 600; }
   tr.month-row td:first-child { text-transform: capitalize; }
   tr.month-row td small { font-weight: 400; }
@@ -146,7 +149,7 @@
 <main>
   <header>
     <h1><img class="logo" src="static/vendor/peugeot-logo.svg" alt="Peugeot">Dashboard e-208</h1>
-    <div class="meta"><span id="fetched">Chargement…</span><button id="refresh" type="button" title="Actualiser" aria-label="Actualiser">🔄</button><button id="theme" type="button"></button><button id="logout" type="button" hidden title="Se déconnecter" aria-label="Se déconnecter">⏻</button></div>
+    <div class="meta"><span id="fetched">Chargement…</span><button id="refresh" type="button" title="Actualiser" aria-label="Actualiser">🔄</button><button id="theme" type="button"></button><button id="logout" type="button" hidden title="Se déconnecter">Déconnexion</button></div>
   </header>
   <div class="error" id="error"></div>
 

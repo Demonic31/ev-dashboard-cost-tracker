@@ -25,6 +25,7 @@ const QUOTA = { BLEU: "Bleus", BLANC: "Blancs", ROUGE: "Rouges" };
 let data = null, charts = {}, currentTab = "charges", view = null;
 const openCurves = new Set();  // recharges dépliées, conservées d'un rendu à l'autre
 const openMonths = { charges: new Set(), trips: new Set() };  // mois dépliés, par tableau
+let seasonOpen = false;  // calendrier Tempo déplié
 
 // ------------------------------------------------------------------ période
 function seasonStart(d) { return new Date(d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1, 8, 1); }
@@ -261,9 +262,11 @@ function renderSeason() {
   el.innerHTML = `<div class="stock">${stock}</div>
     <div class="tomorrow">Demain : ${colorOf[tomorrow] ? `<span class="pill ${colorOf[tomorrow]}">${colorOf[tomorrow]}</span>` : "pas encore publié"}
       · ${Math.max(0, Math.round((new Date(start.getFullYear() + 1, 8, 1) - new Date(today)) / 864e5))} jours avant la fin de saison</div>
+    <details class="cal"${seasonOpen ? " open" : ""}><summary><span class="chev">▸</span> Calendrier de la saison</summary>
     <div class="months">${months.join("")}</div>
     <div class="legend"><span><i style="background:var(--bleu)"></i>Bleu</span><span><i style="background:var(--blanc)"></i>Blanc</span>
-      <span><i style="background:var(--rouge)"></i>Rouge</span><span>Rouges du 1er nov. au 31 mars, hors week-end</span></div>`;
+      <span><i style="background:var(--rouge)"></i>Rouge</span><span>Rouges du 1er nov. au 31 mars, hors week-end</span></div></details>`;
+  el.querySelector("details.cal").addEventListener("toggle", e => { seasonOpen = e.target.open; });
 }
 
 // ------------------------------------------------------------------ courbes de charge
