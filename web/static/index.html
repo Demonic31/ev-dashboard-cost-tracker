@@ -132,6 +132,9 @@
   tr.fold:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
   .chev { display: inline-block; width: 1em; color: var(--muted); transition: transform .15s; }
   tr.fold[aria-expanded="true"] .chev { transform: rotate(90deg); }
+  tr.month-row td { font-weight: 600; }
+  tr.month-row td:first-child { text-transform: capitalize; }
+  tr.month-row td small { font-weight: 400; }
   tr.curve-row > td { padding: 0 0 12px; text-align: left; white-space: normal; }
   .curve { position: sticky; left: 0; padding: 4px 10px 0; }
   .curve .plot { position: relative; height: 220px; }
@@ -235,6 +238,7 @@ const TRANCHE_COLORS = ["--bleu-hc", "--bleu", "--blanc-hc", "--blanc", "--rouge
 const QUOTA = { BLEU: "Bleus", BLANC: "Blancs", ROUGE: "Rouges" };
 let data = null, charts = {}, currentTab = "charges", view = null;
 const openCurves = new Set();  // recharges dépliées, conservées d'un rendu à l'autre
+const openMonths = new Set();  // mois de trajets dépliés
 
 // ------------------------------------------------------------------ période
 function seasonStart(d) { return new Date(d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1, 8, 1); }
@@ -574,10 +578,30 @@ function renderTable() {
   } else {
     const rows = [...view.trips].reverse();
     if (!rows.length) { el.innerHTML = '<div class="empty">Aucun trajet sur la période</div>'; return; }
+    // Un groupe repliable par mois (du plus récent au plus ancien), avec les totaux du mois
+    const months = new Map();
+    rows.forEach(r => { const m = String(r[T.start]).slice(0, 7); months.has(m) || months.set(m, []); months.get(m).push(r); });
     el.innerHTML = `<table><thead><tr><th>Début</th><th>Fin</th><th>Distance</th><th>Conso batterie</th>
       <th>kWh/100 km</th><th>Compteur fin</th></tr></thead><tbody>${
-      rows.map(r => `<tr><td>${dt(r[T.start])}</td><td>${dt(r[T.end])}</td>
-        <td>${fr(r[T.km], 1)} km</td><td>${fr(r[T.kwh], 2)} kWh</td><td>${fr(r[T.kwh100], 1)}</td><td>${fr(r[T.odo], 0)} km</td></tr>`).join("")}</tbody></table>`;
+      [...months].map(([m, list]) => {
+        const kwh100 = ratio(sum(list, T.kwh), sum(list.filter(r => num(r[T.kwh]) > 0), T.km), 100);
+        const odo = Math.max(...list.map(r => num(r[T.odo])));
+        return `<tr class="fold month-row" data-month="${m}" aria-expanded="false" title="Afficher les trajets du mois">
+          <td><span class="chev">▸</span> ${new Date(m + "-01T12:00").toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}</td>
+          <td><small>${list.length} trajet${list.length > 1 ? "s" : ""}</small></td><td>${fr(sum(list, T.km), 1)} km</td>
+          <td>${fr(sum(list, T.kwh), 2)} kWh</td><td>${kwh100 === "" ? "–" : fr(kwh100, 1)}</td><td>${odo ? fr(odo, 0) + " km" : "–"}</td></tr>` +
+          list.map(r => `<tr data-in="${m}" hidden><td>${dt(r[T.start])}</td><td>${dt(r[T.end])}</td>
+            <td>${fr(r[T.km], 1)} km</td><td>${fr(r[T.kwh], 2)} kWh</td><td>${fr(r[T.kwh100], 1)}</td><td>${fr(r[T.odo], 0)} km</td></tr>`).join("");
+      }).join("")}</tbody></table>`;
+    el.querySelectorAll("tr.month-row").forEach(tr => {
+      const toggle = open => {
+        tr.setAttribute("aria-expanded", open);
+        el.querySelectorAll(`tr[data-in="${tr.dataset.month}"]`).forEach(x => { x.hidden = !open; });
+        open ? openMonths.add(tr.dataset.month) : openMonths.delete(tr.dataset.month);
+      };
+      tr.addEventListener("click", () => toggle(tr.getAttribute("aria-expanded") !== "true"));
+      if (openMonths.has(tr.dataset.month)) toggle(true);
+    });
   }
 }
 
