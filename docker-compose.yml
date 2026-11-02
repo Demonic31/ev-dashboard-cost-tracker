@@ -49,11 +49,7 @@ services:
       PETROL_L_100KM: ${PETROL_L_100KM:-}
       PETROL_FUEL: ${PETROL_FUEL:-sp98}
       PETROL_DEPARTEMENT: ${PETROL_DEPARTEMENT:-}
-      VIN: ${VIN:-}
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-sa
-    volumes:
-      # Positions GPS des trajets (carte), lues dans une copie de info.db
-      - ./psacc/config:/config:ro
     ports:
       # Lié à l'IP LAN uniquement (pas 0.0.0.0)
       - "${LAN_IP:?LAN_IP manquant dans .env}:${DASHBOARD_PORT:-8080}:8080"

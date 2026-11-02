@@ -6,28 +6,24 @@
 <title>e-208 · Suivi des coûts de recharge</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
   :root {
     --bg: #f4f6f9; --card: #ffffff; --text: #1d2430; --muted: #6b7585; --border: #e3e7ee;
     --accent: #0f766e; --bleu: #2563eb; --bleu-hc: #1e40af; --blanc: #94a3b8; --blanc-hc: #64748b;
     --rouge: #dc2626; --rouge-hc: #991b1b; --base: #a8a29e; --petrol: #b45309; --good: #15803d; --bad: #b91c1c;
-    --track: #0f766e; --track-sel: #ea580c; --shadow: 0 1px 3px rgba(15, 23, 42, .08); --tiles: none; --logo: none;
+    --shadow: 0 1px 3px rgba(15, 23, 42, .08); --logo: none;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #0f141b; --card: #171e28; --text: #e6ebf2; --muted: #8a96a8; --border: #263040;
       --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --good: #4ade80; --bad: #f87171;
-      --track: #2dd4bf; --track-sel: #fb923c; --shadow: none;
-      --tiles: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); --logo: invert(1);
+      --shadow: none; --logo: invert(1);
     }
   }
   :root[data-theme="dark"] {
     --bg: #0f141b; --card: #171e28; --text: #e6ebf2; --muted: #8a96a8; --border: #263040;
     --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --good: #4ade80; --bad: #f87171;
-    --track: #2dd4bf; --track-sel: #fb923c; --shadow: none;
-    --tiles: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); --logo: invert(1);
+    --shadow: none; --logo: invert(1);
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
@@ -80,9 +76,6 @@
   @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
   .chart { position: relative; height: 280px; }
   .empty { color: var(--muted); font-size: .9rem; padding: 24px 0; text-align: center; }
-  #map { flex: 1; min-height: 380px; border-radius: 8px; z-index: 0; }
-  .leaflet-tile-pane { filter: var(--tiles); }
-  .leaflet-container { background: var(--border); font: inherit; }
   .stock { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
   .stock .n { font-size: 1.35rem; font-weight: 650; font-variant-numeric: tabular-nums; }
   .stock .n small { font-size: .8rem; color: var(--muted); font-weight: 400; }
@@ -91,6 +84,8 @@
   .gauge span { display: block; height: 100%; }
   .tomorrow { font-size: .85rem; color: var(--muted); margin-bottom: 12px; }
   .months { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px 8px; }
+  @media (min-width: 1100px) { .months { grid-template-columns: repeat(12, 1fr); } }
+  .season-card { margin-bottom: 16px; }
   .month .title { font-size: .72rem; color: var(--muted); margin-bottom: 3px; text-transform: capitalize; }
   .month .days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
   .day { aspect-ratio: 1; border-radius: 2px; background: transparent; outline: 1px solid var(--border); outline-offset: -1px; }
@@ -108,8 +103,6 @@
   th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--card); }
   th:first-child, td:first-child, td.text { text-align: left; }
   td.note { white-space: normal; min-width: 160px; color: var(--muted); text-align: left; }
-  tr.clickable { cursor: pointer; } tr.clickable:hover td { background: var(--bg); }
-  tr.selected td { background: color-mix(in srgb, var(--track-sel) 14%, transparent); }
   .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .75rem; font-weight: 600; color: #fff; }
   .pill.BLEU { background: var(--bleu); } .pill.BLANC { background: var(--blanc); color: #1d2430; }
   .pill.ROUGE { background: var(--rouge); }
@@ -159,16 +152,9 @@
     </div>
   </section>
 
-  <section class="grid2">
-    <div class="card">
-      <h2>Carte des trajets <small id="mapInfo"></small></h2>
-      <div id="map"></div>
-      <div class="empty" id="mapEmpty" hidden></div>
-    </div>
-    <div class="card">
-      <h2>Saison Tempo <small id="seasonName"></small></h2>
-      <div id="season"><div class="empty">Chargement…</div></div>
-    </div>
+  <section class="card season-card">
+    <h2>Saison Tempo <small id="seasonName"></small></h2>
+    <div id="season"><div class="empty">Chargement…</div></div>
   </section>
 
   <section class="card">
@@ -210,7 +196,7 @@ const KPI_FMT = [v => eur(v), v => fr(v, 1), v => fr(v, 0), v => eur(v), v => fr
 const TRANCHES = ["Bleu HC", "Bleu HP", "Blanc HC", "Blanc HP", "Rouge HC", "Rouge HP"];
 const TRANCHE_COLORS = ["--bleu-hc", "--bleu", "--blanc-hc", "--blanc", "--rouge-hc", "--rouge"];
 const QUOTA = { BLEU: "Bleus", BLANC: "Blancs", ROUGE: "Rouges" };
-let data = null, tracks = {}, charts = {}, currentTab = "charges", view = null, selectedTrip = null;
+let data = null, charts = {}, currentTab = "charges", view = null;
 
 // ------------------------------------------------------------------ période
 function seasonStart(d) { return new Date(d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1, 8, 1); }
@@ -412,55 +398,6 @@ function renderSeason() {
       <span><i style="background:var(--rouge)"></i>Rouge</span><span>Rouges du 1er nov. au 31 mars, hors week-end</span></div>`;
 }
 
-// ------------------------------------------------------------------ carte
-let map = null, layers = {};
-function renderMap() {
-  const shown = view.trips.filter(r => tracks[r[T.id]]);
-  const empty = document.getElementById("mapEmpty"), mapEl = document.getElementById("map");
-  document.getElementById("mapInfo").textContent = shown.length ? `${shown.length} trajet(s) · cliquer un trajet pour le surligner` : "";
-  if (!shown.length) {
-    mapEl.hidden = true; empty.hidden = false;
-    empty.textContent = tracks.__error ? "Positions indisponibles : " + tracks.__error : "Aucun tracé GPS sur la période";
-    return;
-  }
-  mapEl.hidden = false; empty.hidden = true;
-  if (!map) {
-    map = L.map(mapEl, { scrollWheelZoom: false });
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-      { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>' }).addTo(map);
-  }
-  map.invalidateSize();
-  Object.values(layers).forEach(l => l.remove());
-  layers = {};
-  shown.forEach(r => {
-    const id = r[T.id];
-    layers[id] = L.polyline(tracks[id], { color: css("--track"), weight: 3, opacity: .75 })
-      .bindTooltip(`${dt(r[T.start])} · ${fr(r[T.km], 1)} km · ${fr(r[T.kwh100], 1)} kWh/100`, { sticky: true })
-      .on("click", () => selectTrip(id, false)).addTo(map);
-  });
-  if (selectedTrip && !layers[selectedTrip]) selectedTrip = null;
-  styleTracks();
-  map.fitBounds(L.featureGroup(Object.values(selectedTrip ? [layers[selectedTrip]] : layers)).getBounds(), { padding: [20, 20] });
-}
-
-function styleTracks() {
-  Object.entries(layers).forEach(([id, l]) => {
-    const sel = id === selectedTrip;
-    l.setStyle({ color: css(sel ? "--track-sel" : "--track"), weight: sel ? 5 : 3, opacity: selectedTrip && !sel ? .35 : .8 });
-    if (sel) l.bringToFront();
-  });
-  document.querySelectorAll("tr[data-trip]").forEach(tr => tr.classList.toggle("selected", tr.dataset.trip === selectedTrip));
-}
-
-function selectTrip(id, zoom = true) {
-  selectedTrip = selectedTrip === id ? null : id;
-  styleTracks();
-  if (zoom && selectedTrip && layers[selectedTrip]) {
-    map.fitBounds(layers[selectedTrip].getBounds(), { padding: [20, 20] });
-    document.getElementById("map").scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }
-}
-
 // ------------------------------------------------------------------ tableaux
 function renderTable() {
   const el = document.getElementById("table");
@@ -482,28 +419,16 @@ function renderTable() {
     const rows = [...view.trips].reverse();
     if (!rows.length) { el.innerHTML = '<div class="empty">Aucun trajet sur la période</div>'; return; }
     el.innerHTML = `<table><thead><tr><th>Début</th><th>Fin</th><th>Distance</th><th>Conso batterie</th>
-      <th>kWh/100 km</th><th>Compteur fin</th><th>Carte</th></tr></thead><tbody>${
-      rows.map(r => { const has = !!tracks[r[T.id]];
-        return `<tr${has ? ` class="clickable" data-trip="${esc(r[T.id])}"` : ""}><td>${dt(r[T.start])}</td><td>${dt(r[T.end])}</td>
-        <td>${fr(r[T.km], 1)} km</td><td>${fr(r[T.kwh], 2)} kWh</td><td>${fr(r[T.kwh100], 1)}</td><td>${fr(r[T.odo], 0)} km</td>
-        <td>${has ? "📍" : "–"}</td></tr>`; }).join("")}</tbody></table>`;
-    el.querySelectorAll("tr[data-trip]").forEach(tr => tr.addEventListener("click", () => selectTrip(tr.dataset.trip)));
-    styleTracks();
+      <th>kWh/100 km</th><th>Compteur fin</th></tr></thead><tbody>${
+      rows.map(r => `<tr><td>${dt(r[T.start])}</td><td>${dt(r[T.end])}</td>
+        <td>${fr(r[T.km], 1)} km</td><td>${fr(r[T.kwh], 2)} kWh</td><td>${fr(r[T.kwh100], 1)}</td><td>${fr(r[T.odo], 0)} km</td></tr>`).join("")}</tbody></table>`;
   }
 }
 
 // ------------------------------------------------------------------ chargement
 function render() {
   view = computeView();
-  renderPeriod(); renderKpis(); renderOffers(); renderCharts(); renderMap(); renderTable();
-}
-
-async function loadTracks(force) {
-  try {
-    const body = await (await fetch("api/tracks" + (force ? "?refresh=1" : ""))).json();
-    tracks = body.tracks || {};
-    if (body.error) tracks.__error = body.error;
-  } catch (e) { tracks = { __error: e.message }; }
+  renderPeriod(); renderKpis(); renderOffers(); renderCharts(); renderTable();
 }
 
 async function load(force = false) {
@@ -513,7 +438,6 @@ async function load(force = false) {
     const body = await resp.json();
     if (!resp.ok) throw new Error(body.error || resp.status);
     data = body;
-    await loadTracks(force);
     err.style.display = "none";
     document.getElementById("fetched").textContent = "Données du Sheet au " + new Date(data.fetched_at).toLocaleString("fr-FR");
     renderSeason(); render();
@@ -542,7 +466,7 @@ document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click
   if (data) renderTable();
 }));
 document.getElementById("refresh").addEventListener("click", () => load(true));
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => data && (renderCharts(), styleTracks()));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => data && renderCharts());
 load();
 setInterval(load, 5 * 60 * 1000);
 </script>

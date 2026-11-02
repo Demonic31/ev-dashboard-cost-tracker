@@ -5,32 +5,24 @@ Sert une page HTML et un endpoint /api/data qui renvoie, en JSON, les valeurs ca
 (onglets Dashboard, Recharges, Trajets, Couleurs Tempo). Aucune donnée n'est recalculée ici : la page est un
 miroir du Sheet, rafraîchi au plus toutes les CACHE_SECONDS.
 
-En complément : la saison Tempo en cours (api-couleur-tempo.fr, comme la synchro), les tracés GPS des trajets
-(/api/tracks), lus dans une copie de la base psacc montée en lecture seule, et les paramètres du comparatif des offres
-(prix des autres options EDF, prix moyen du carburant sur data.economie.gouv.fr).
+En complément : la saison Tempo en cours (api-couleur-tempo.fr, comme la synchro) et les paramètres du comparatif
+des offres (prix des autres options EDF, prix moyen du carburant sur data.economie.gouv.fr).
 """
 import json
 import logging
 import os
-import shutil
-import sqlite3
 import sys
-import tempfile
 import threading
 import time
-from bisect import bisect_left, bisect_right
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from zoneinfo import ZoneInfo
 
 import requests
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
 
-PARIS = ZoneInfo("Europe/Paris")
 SHEET_EPOCH = datetime(1899, 12, 30)
 COLORS = {1: "BLEU", 2: "BLANC", 3: "ROUGE"}
-TRACK_MAX_POINTS = 400
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 # Plages lues et colonnes contenant des dates (index 0-based) à convertir en ISO
@@ -212,62 +204,7 @@ def offers_config():
             "petrol_l_100km": env_price("PETROL_L_100KM")}
 
 
-class Tracks:
-    """Tracés GPS des trajets du Sheet, lus dans une copie de info.db (la base psacc n'est jamais verrouillée)."""
-
-    def __init__(self, config_dir, vin, mirror):
-        self.config_dir, self.vin, self.mirror = config_dir, vin, mirror
-
-    def car_vin(self):
-        if self.vin:
-            return self.vin
-        with open(os.path.join(self.config_dir, "cars.json"), encoding="utf-8") as f:
-            return next(c["vin"] for c in json.load(f) if (c.get("battery_power") or 0) > 0)
-
-    def positions(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            for name in ("info.db", "info.db-wal"):
-                if os.path.exists(os.path.join(self.config_dir, name)):
-                    shutil.copyfile(os.path.join(self.config_dir, name), os.path.join(tmp, name))
-            conn = sqlite3.connect(os.path.join(tmp, "info.db"))
-            try:
-                rows = conn.execute("SELECT Timestamp, latitude, longitude FROM position WHERE VIN=? "
-                                    "AND latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY Timestamp",
-                                    (self.car_vin(),)).fetchall()
-            finally:
-                conn.close()
-        out = []
-        for ts, lat, lon in rows:
-            dt = datetime.fromisoformat(ts)
-            out.append((dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc), lat, lon))
-        return out
-
-    @cached(300)
-    def get(self):
-        if not os.path.exists(os.path.join(self.config_dir, "info.db")):
-            return {"error": "base psacc introuvable (volume /config non monté ?)", "tracks": {}}
-        trips = self.mirror.get()["trips"]["rows"]
-        points = self.positions()
-        stamps = [p[0] for p in points]
-        tracks = {}
-        for row in trips:
-            try:
-                start = datetime.strptime(row[0], "T-%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
-                end = datetime.fromisoformat(row[2]).replace(tzinfo=PARIS).astimezone(timezone.utc)
-            except (TypeError, ValueError):
-                continue
-            pts = [[round(lat, 5), round(lon, 5)]
-                   for _, lat, lon in points[bisect_left(stamps, start):bisect_right(stamps, end)]]
-            pts = [p for i, p in enumerate(pts) if not i or p != pts[i - 1]]  # voiture à l'arrêt : points répétés
-            step = max(1, -(-len(pts) // TRACK_MAX_POINTS))
-            pts = pts[::step] + ([pts[-1]] if pts and (len(pts) - 1) % step else [])
-            if len(pts) >= 2:
-                tracks[row[0]] = pts
-        log.info("tracés GPS : %d trajet(s) sur %d", len(tracks), len(trips))
-        return {"tracks": tracks}
-
-
-def make_handler(mirror, season, tracks, fuel, offers):
+def make_handler(mirror, season, fuel, offers):
     class Handler(BaseHTTPRequestHandler):
         server_version = "e208-dashboard"
 
@@ -296,13 +233,6 @@ def make_handler(mirror, season, tracks, fuel, offers):
                 except Exception as exc:  # pylint: disable=broad-except
                     log.exception("lecture du Sheet impossible")
                     self.send(502, json.dumps({"error": str(exc)}).encode(), "application/json")
-            elif path == "/api/tracks":
-                try:
-                    body = tracks.get(force="refresh=1" in self.path)
-                except Exception as exc:  # pylint: disable=broad-except
-                    log.exception("lecture des positions impossible")
-                    body = {"error": str(exc), "tracks": {}}
-                self.send(200, json.dumps(body).encode(), "application/json")
             elif path == "/healthz":
                 self.send(200, b"ok", "text/plain")
             else:
@@ -318,12 +248,11 @@ def main():
     mirror = SheetMirror(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/google-sa.json"),
                          spreadsheet_id, int(os.environ.get("CACHE_SECONDS", "300")))
     season = TempoSeason(os.environ.get("TEMPO_API_URL", "https://www.api-couleur-tempo.fr/api"))
-    tracks = Tracks(os.environ.get("PSACC_CONFIG_DIR", "/config"), os.environ.get("VIN") or None, mirror)
     fuel = FuelPrice(os.environ.get("PETROL_FUEL", "sp98"), os.environ.get("PETROL_DEPARTEMENT", "").strip())
     offers = offers_config()
     port = int(os.environ.get("PORT", "8080"))
     log.info("front e-208 sur le port %d (comparatif : %s)", port, json.dumps(offers))
-    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, tracks, fuel, offers)).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, offers)).serve_forever()
 
 
 if __name__ == "__main__":

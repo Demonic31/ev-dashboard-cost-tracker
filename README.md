@@ -6,7 +6,7 @@ Enregistre automatiquement chaque recharge et chaque trajet d'une **Peugeot e-20
 | :--- | :--- |
 | `psacc` | Image officielle `flobz/psa_car_controller` : connexion au compte MyPeugeot, enregistrement des positions, charges et courbes de charge dans `psacc/config/info.db` (option `-r`), tableau de bord web sur le port 5000 (réseau local uniquement). |
 | `psacc-sheets-sync` | Petit service Python ([`sync/psacc_sheets_sync.py`](sync/psacc_sheets_sync.py)) qui lit une copie de la base psacc, récupère les couleurs Tempo et met à jour le Sheet toutes les heures. |
-| `e208-dashboard` | Front web en lecture seule ([`web/`](web/)) sur le port 8080 (réseau local uniquement) : copie fidèle des valeurs du Sheet, filtres par période, saison Tempo, carte des trajets, comparatif des offres. |
+| `e208-dashboard` | Front web en lecture seule ([`web/`](web/)) sur le port 8080 (réseau local uniquement) : copie fidèle des valeurs du Sheet, filtres par période, saison Tempo, comparatif des offres. |
 
 ---
 
@@ -96,7 +96,6 @@ Puis ouvrir `http://<LAN_IP>:8080`. La page affiche ce que le Sheet a calculé, 
 
 * **Indicateurs, coût par mois, énergie par tranche** : en période « Tout », ce sont les valeurs du `Dashboard` ; pour une autre période (saison Tempo, 12 derniers mois, mois, dates libres), les mêmes formules sont appliquées aux lignes de `Recharges` et `Trajets` de la période. La période choisie est mémorisée dans le navigateur.
 * **Saison Tempo** (1er septembre → 31 août) : jours blancs, rouges et bleus restants, couleur du lendemain et calendrier de la saison, depuis [api-couleur-tempo.fr](https://www.api-couleur-tempo.fr) (cache d'une heure).
-* **Carte des trajets** : les positions GPS sont lues dans une copie de `psacc/config/info.db`, montée en lecture seule. Le fond de carte OpenStreetMap est chargé par le navigateur. Cliquer un trajet du tableau ou de la carte pour le mettre en évidence.
 * **Comparatif des offres**, pour la même énergie (kWh facturés de la période) et hors abonnements. Une offre dont le prix n'est pas renseigné est signalée « à renseigner » :
   * **Tempo** : ton coût réel, calculé par le Sheet ;
   * **Base** : kWh × `BASE_PRICE_KWH` ;
@@ -141,6 +140,6 @@ Les données déjà enregistrées sont conservées ; rien à faire côté synchr
 ## 🔒 Sécurité
 
 * `.env`, `secrets/` et `psacc/config/` (jetons Stellantis, VIN, positions GPS) sont exclus de git.
-* La clé Google est montée en *secret* Docker en lecture seule ; le service tourne en utilisateur non root et monte la config psacc en lecture seule.
-* Le front (port 8080) affiche les positions GPS des trajets : comme psacc, il n'est publié que sur l'IP locale.
+* La clé Google est montée en *secret* Docker en lecture seule ; la synchro tourne en utilisateur non root et monte la config psacc en lecture seule.
+* Le front (port 8080) n'est publié que sur l'IP locale, comme psacc.
 * Le port 5000 n'est publié que sur l'IP locale : ne pas l'exposer sur Internet (l'interface permet de piloter la voiture).
