@@ -53,6 +53,9 @@ services:
       PETROL_FUEL: ${PETROL_FUEL:-sp98}
       PETROL_DEPARTEMENT: ${PETROL_DEPARTEMENT:-}
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-sa
+    volumes:
+      # Base psacc en lecture seule, copiée avant lecture (courbes de charge)
+      - ./psacc/config:/config:ro
     ports:
       # Lié à l'IP LAN uniquement (pas 0.0.0.0)
       - "${LAN_IP:?LAN_IP manquant dans .env}:${DASHBOARD_PORT:-8080}:8080"

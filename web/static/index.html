@@ -128,6 +128,14 @@
   .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .75rem; font-weight: 600; color: #fff; }
   .pill.BLEU { background: var(--bleu); } .pill.BLANC { background: var(--blanc); color: #1d2430; }
   .pill.ROUGE { background: var(--rouge); }
+  tr.fold { cursor: pointer; }
+  tr.fold:hover td { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  .chev { display: inline-block; width: 1em; color: var(--muted); transition: transform .15s; }
+  tr.fold[aria-expanded="true"] .chev { transform: rotate(90deg); }
+  tr.curve-row > td { padding: 0 0 12px; text-align: left; white-space: normal; }
+  .curve { position: sticky; left: 0; padding: 4px 10px 0; }
+  .curve .plot { position: relative; height: 220px; }
+  .curve .hint { color: var(--muted); font-size: .78rem; margin-top: 6px; }
   .bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--border); min-width: 90px; }
   .error { background: #fee2e2; color: #991b1b; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; display: none; }
 </style>
@@ -226,6 +234,7 @@ const TRANCHES = ["Bleu HC", "Bleu HP", "Blanc HC", "Blanc HP", "Rouge HC", "Rou
 const TRANCHE_COLORS = ["--bleu-hc", "--bleu", "--blanc-hc", "--blanc", "--rouge-hc", "--rouge"];
 const QUOTA = { BLEU: "Bleus", BLANC: "Blancs", ROUGE: "Rouges" };
 let data = null, charts = {}, currentTab = "charges", view = null;
+const openCurves = new Set();  // recharges dépliées, conservées d'un rendu à l'autre
 
 // ------------------------------------------------------------------ période
 function seasonStart(d) { return new Date(d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1, 8, 1); }
@@ -467,9 +476,82 @@ function renderSeason() {
       <span><i style="background:var(--rouge)"></i>Rouge</span><span>Rouges du 1er nov. au 31 mars, hors week-end</span></div>`;
 }
 
+// ------------------------------------------------------------------ courbes de charge
+// Points relevés par psacc ; sans courbe (recharge saisie à la main), droite début → fin tirée du Sheet
+function curvePoints(r) {
+  const pts = data.charge_curves?.curves?.[r[0]];
+  if (pts?.length >= 2) return { real: true, pts: pts.map(([d, level, autonomy]) => ({ x: +new Date(d), y: level, autonomy })) };
+  const start = +new Date(r[C.start]), h = num(r[C.duration]);
+  if (!start || !h || r[3] === "" || r[4] === "") return null;
+  return { real: false, pts: [{ x: start, y: num(r[3]) }, { x: start + h * 36e5, y: num(r[4]) }] };
+}
+
+function toggleCurve(tr) {
+  const open = tr.getAttribute("aria-expanded") !== "true", row = tr.nextElementSibling, id = tr.dataset.id;
+  tr.setAttribute("aria-expanded", open);
+  row.hidden = !open;
+  open ? openCurves.add(id) : openCurves.delete(id);
+  const key = "curve-" + id;
+  if (!open) { charts[key]?.destroy(); delete charts[key]; row.cells[0].innerHTML = ""; return; }
+  const r = view.charges.find(x => x[0] === id), c = r && curvePoints(r), cell = row.cells[0];
+  cell.innerHTML = `<div class="curve" style="width:${document.getElementById("table").clientWidth}px">${c
+    ? '<div class="plot"><canvas></canvas></div><div class="hint"></div>' : '<div class="empty">Pas de courbe pour cette recharge</div>'}</div>`;
+  if (!c) return;
+  drawCurve(key, cell.querySelector("canvas"), cell.querySelector(".hint"), r, c);
+}
+
+function drawCurve(key, canvas, hint, r, { real, pts }) {
+  const hour = 36e5, span = pts.at(-1).x - pts[0].x, step = span > 12 * hour ? 2 * hour : hour;
+  const xmin = Math.floor((pts[0].x - hour / 2) / hour) * hour, xmax = Math.ceil((pts.at(-1).x + hour / 2) / hour) * hour;
+  const ymin = Math.max(0, Math.floor((Math.min(...pts.map(p => p.y)) - 5) / 10) * 10);
+  const hhmm = x => new Date(x).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const kw = (a, b) => data.battery_kwh ? (b.y - a.y) / 100 * data.battery_kwh / ((b.x - a.x) / hour) : null;
+  const [hcS, hcE] = data.hc_hours.map(Number), hcColor = css("--bleu-hc");
+  // Bandes heures creuses (fond), découpées sur les jours couverts par l'axe
+  const hcBands = {
+    id: "hcBands",
+    beforeDatasetsDraw(ch) {
+      const { ctx, chartArea: a, scales: { x } } = ch;
+      ctx.save();
+      ctx.fillStyle = hcColor; ctx.globalAlpha = .15;
+      for (let d = new Date(xmin - 864e5); +d < xmax; d.setDate(d.getDate() + 1)) {
+        const s = new Date(d.getFullYear(), d.getMonth(), d.getDate(), hcS);
+        const e = new Date(d.getFullYear(), d.getMonth(), d.getDate() + (hcE <= hcS ? 1 : 0), hcE);
+        const x0 = Math.max(x.getPixelForValue(+s), a.left), x1 = Math.min(x.getPixelForValue(+e), a.right);
+        if (x1 > x0) ctx.fillRect(x0, a.top, x1 - x0, a.bottom - a.top);
+      }
+      ctx.restore();
+    },
+  };
+  charts[key] = new Chart(canvas, {
+    type: "line",
+    data: { datasets: [{ data: pts, borderColor: css("--accent"), backgroundColor: css("--accent"),
+      pointRadius: real ? 4 : 0, pointHoverRadius: 6, borderWidth: 2,
+      segment: { borderDash: () => [6, 4] } }] },
+    options: { maintainAspectRatio: false, animation: false, parsing: false,
+      interaction: { mode: "nearest", intersect: false },
+      scales: { x: { type: "linear", min: xmin, max: xmax, ticks: { stepSize: step, callback: v => new Date(v).getHours() + "h" } },
+                y: { min: ymin, max: 100, ticks: { callback: v => v + " %" } } },
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: {
+          title: items => new Date(items[0].raw.x).toLocaleString("fr-FR", { weekday: "short", hour: "2-digit", minute: "2-digit" }),
+          label: c => {
+            const p = c.raw, prev = pts[c.dataIndex - 1], rate = prev && kw(prev, p);
+            return [`${fr(p.y, 0)} %${p.autonomy ? ` · ${fr(p.autonomy, 0)} km d'autonomie` : ""}`,
+                    ...(rate != null ? [`≈ ${fr(rate, 2)} kW depuis ${hhmm(prev.x)}`] : [])];
+          } } } } },
+    plugins: [hcBands],
+  });
+  const h = num(r[C.duration]), avg = h ? num(r[C.kwhBat]) / h : 0;
+  hint.textContent = (real ? `${pts.length} points relevés par psacc ; entre deux points la courbe est interpolée (pointillés).`
+    : "Recharge sans relevé psacc : droite estimée entre le début et la fin.")
+    + (avg ? ` Puissance moyenne ≈ ${fr(avg, 2)} kW.` : "") + ` Fond bleu : heures creuses ${hcS}h–${hcE}h.`;
+}
+
 // ------------------------------------------------------------------ tableaux
 function renderTable() {
   const el = document.getElementById("table");
+  Object.keys(charts).filter(k => k.startsWith("curve-")).forEach(k => { charts[k].destroy(); delete charts[k]; });
   if (currentTab === "charges") {
     const rows = [...view.charges].reverse();
     if (!rows.length) { el.innerHTML = '<div class="empty">Aucune recharge sur la période</div>'; return; }
@@ -479,11 +561,16 @@ function renderTable() {
       rows.map(r => {
         const parts = r.slice(C.slots, C.slots + 6).map(Number), total = parts.reduce((a, b) => a + (b || 0), 0) || 1;
         const bar = parts.map((p, i) => p > 0 ? `<span style="width:${100 * p / total}%;background:${css(TRANCHE_COLORS[i])}" title="${TRANCHES[i]} : ${fr(p, 2)} kWh"></span>` : "").join("");
-        return `<tr><td>${dt(r[C.start])}</td><td>${fr(r[C.duration], 1)} h</td><td>${fr(r[3], 0)} → ${fr(r[4], 0)} %</td>
+        return `<tr class="fold" data-id="${esc(r[0])}" aria-expanded="false" title="Afficher la courbe de charge"><td><span class="chev">▸</span> ${dt(r[C.start])}</td><td>${fr(r[C.duration], 1)} h</td><td>${fr(r[3], 0)} → ${fr(r[4], 0)} %</td>
           <td>${fr(r[C.kwhBat], 1)}${data.battery_kwh && num(r[C.kwhBat]) ? ` <small>(${fr(100 * num(r[C.kwhBat]) / data.battery_kwh, 0)} %)</small>` : ""}</td><td class="text">${r[C.color] ? `<span class="pill ${esc(r[C.color])}">${esc(r[C.color])}</span>` : "–"}</td>
           <td class="text"><div class="bar">${bar}</div></td><td>${fr(r[C.kwh], 1)}</td><td>${eur(r[C.cost])}</td>
-          <td>${eur(r[C.eurKwh], 4)}</td><td>${fr(r[C.km], 0)}</td><td>${eur(r[C.eur100])}</td><td class="note">${esc(r[C.note])}</td></tr>`;
+          <td>${eur(r[C.eurKwh], 4)}</td><td>${fr(r[C.km], 0)}</td><td>${eur(r[C.eur100])}</td><td class="note">${esc(r[C.note])}</td></tr>
+          <tr class="curve-row" hidden><td colspan="12"></td></tr>`;
       }).join("")}</tbody></table>`;
+    el.querySelectorAll("tr.fold").forEach(tr => {
+      tr.addEventListener("click", () => toggleCurve(tr));
+      if (openCurves.has(tr.dataset.id)) toggleCurve(tr);
+    });
   } else {
     const rows = [...view.trips].reverse();
     if (!rows.length) { el.innerHTML = '<div class="empty">Aucun trajet sur la période</div>'; return; }
@@ -547,9 +634,9 @@ document.getElementById("theme").addEventListener("click", () => {
   document.documentElement.dataset.theme = theme;
   try { localStorage.setItem("theme", theme); } catch (e) {}
   renderThemeButton();
-  if (data) renderCharts();
+  if (data) { renderCharts(); renderTable(); }
 });
-systemDark.addEventListener("change", () => { renderThemeButton(); if (data) renderCharts(); });
+systemDark.addEventListener("change", () => { renderThemeButton(); if (data) { renderCharts(); renderTable(); } });
 renderThemeButton();
 load();
 setInterval(load, 5 * 60 * 1000);

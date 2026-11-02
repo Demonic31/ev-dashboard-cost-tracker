@@ -11,10 +11,13 @@ des offres (prix des autres options EDF, prix moyen du carburant sur data.econom
 import json
 import logging
 import os
+import shutil
+import sqlite3
 import sys
+import tempfile
 import threading
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import requests
@@ -218,6 +221,49 @@ class CarStatus:
             return {"error": str(exc) or type(exc).__name__}
 
 
+class ChargeCurves:
+    """Points de la courbe de charge relevés par psacc (table battery_curve), par ID de recharge du Sheet.
+    La base est copiée (avec son WAL) avant lecture : celle de psacc n'est jamais verrouillée ni modifiée."""
+
+    def __init__(self, psacc, config_dir):
+        self.psacc, self.config_dir = psacc, config_dir
+
+    @staticmethod
+    def iso(ts):
+        return datetime.fromisoformat(ts).astimezone(timezone.utc).isoformat(timespec="seconds")
+
+    @cached(300)
+    def get(self):
+        try:
+            vin = self.psacc.vin()
+            with tempfile.TemporaryDirectory() as tmp:
+                for name in ("info.db", "info.db-wal"):
+                    if os.path.exists(os.path.join(self.config_dir, name)):
+                        shutil.copyfile(os.path.join(self.config_dir, name), os.path.join(tmp, name))
+                conn = sqlite3.connect(os.path.join(tmp, "info.db"))
+                try:
+                    charges = conn.execute("SELECT start_at, stop_at, start_level, end_level FROM battery "
+                                           "WHERE VIN=? AND stop_at IS NOT NULL", (vin,)).fetchall()
+                    curves = {}
+                    for start, stop, start_level, end_level in charges:
+                        points = [[self.iso(d), lvl, aut] for d, lvl, aut in conn.execute(
+                            "SELECT date, level, autonomy FROM battery_curve WHERE VIN=? AND start_at=? ORDER BY date",
+                            (vin, start)).fetchall()]
+                        # début et fin de la table battery : bornes réelles de la charge
+                        if start_level is not None and (not points or points[0][0] > self.iso(start)):
+                            points.insert(0, [self.iso(start), start_level, None])
+                        if end_level is not None and (not points or points[-1][0] < self.iso(stop)):
+                            points.append([self.iso(stop), end_level, None])
+                        sid = "C-" + datetime.fromisoformat(start).astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                        curves[sid] = points
+                finally:
+                    conn.close()
+            return {"curves": curves}
+        except (OSError, sqlite3.Error, requests.RequestException, ValueError, StopIteration) as exc:
+            log.warning("courbes de charge indisponibles : %s", exc)
+            return {"error": str(exc) or type(exc).__name__}
+
+
 class FuelPrice:
     """Prix moyen d'un carburant (stations mises à jour ces `days` derniers jours), France ou un département."""
 
@@ -261,7 +307,7 @@ def offers_config():
             "petrol_l_100km": env_price("PETROL_L_100KM")}
 
 
-def make_handler(mirror, season, fuel, offers, battery_kwh, health, car):
+def make_handler(mirror, season, fuel, offers, battery_kwh, health, car, curves):
     class Handler(BaseHTTPRequestHandler):
         server_version = "e208-dashboard"
 
@@ -286,6 +332,7 @@ def make_handler(mirror, season, fuel, offers, battery_kwh, health, car):
                     force = "refresh=1" in self.path
                     data = dict(mirror.get(force=force), season=season.get(force=force), battery_kwh=battery_kwh,
                                 health=health.get(force=force), car=car.get(force=force),
+                                charge_curves=curves.get(force=force),
                                 offers=dict(offers, fuel=fuel.get() if offers["petrol_l_100km"] else None))
                     self.send(200, json.dumps(data, ensure_ascii=False).encode(), "application/json; charset=utf-8")
                 except Exception as exc:  # pylint: disable=broad-except
@@ -310,9 +357,10 @@ def main():
     offers = offers_config()
     psacc = Psacc(os.environ.get("PSACC_URL", "http://psacc:5000"), os.environ.get("VIN") or None)
     health, car = BatteryHealth(psacc), CarStatus(psacc)
+    curves = ChargeCurves(psacc, os.environ.get("PSACC_CONFIG", "/config"))
     port = int(os.environ.get("PORT", "8080"))
     log.info("front e-208 sur le port %d (comparatif : %s)", port, json.dumps(offers))
-    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, offers, env_price("BATTERY_KWH"), health, car)).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, offers, env_price("BATTERY_KWH"), health, car, curves)).serve_forever()
 
 
 if __name__ == "__main__":
