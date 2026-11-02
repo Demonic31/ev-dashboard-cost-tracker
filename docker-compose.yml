@@ -26,6 +26,9 @@ services:
       VIN: ${VIN:-}
       SYNC_INTERVAL: ${SYNC_INTERVAL:-3600}
       DRY_RUN: ${DRY_RUN:-false}
+      WAKEUP_AT: ${WAKEUP_AT-03:00,05:55}
+      # Contrôle de charge et réveil par l'API web de psacc (réseau Docker interne)
+      PSACC_URL: http://psacc:5000
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-sa
     volumes:
       - ./psacc/config:/config:ro

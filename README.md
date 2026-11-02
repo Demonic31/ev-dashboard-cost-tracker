@@ -67,6 +67,7 @@ docker compose logs -f psacc-sheets-sync
 * **Couleurs Tempo** (`A:B`) : [api-couleur-tempo.fr](https://www.api-couleur-tempo.fr) (`/api/joursTempo?periode[]=2025-2026` pour l'historique, `/api/jourTempo/today|tomorrow`), de la première charge (à défaut la première position) jusqu'à demain si publié.
 * **Recharges** (`A:N` uniquement) : une ligne par charge **terminée** (`battery.stop_at` renseigné), identifiant `C-<début UTC>`. Les kWh (`battery.kw` = capacité × % gagné) sont répartis en Bleu/Blanc/Rouge × HC/HP : jour Tempo = `date(t − 6h)`, HC de 22h à 6h, au prorata du % gagné entre deux points de la **courbe de charge** (`battery_curve`), à défaut au prorata du temps. Une charge dont une couleur n'est pas encore connue est reprise au passage suivant. Compteur km : celui du début de charge, sinon la dernière position connue avant la charge.
 * **Trajets** (`A:G` uniquement) : psacc ne stocke pas les trajets ; ils sont recalculés depuis la table `position` avec **les mêmes règles que psacc** (arrêt si vitesse moyenne quasi nulle, recharge détectée ou trou de plus de 2 h ; trajets aberrants écartés). Le dernier trajet n'est écrit que lorsqu'il est clos.
+* **Réveil pendant la charge** : à chaque heure de `WAKEUP_AT` (par défaut 3h et 5h55), la synchro lit le dernier état connu dans le cache de psacc (`/get_vehicleinfo/<VIN>?from_cache=1`, sans réveil). Si la voiture est « en charge », elle demande un réveil à psacc (`/wakeup/<VIN>`) : la voiture renvoie son état et psacc ajoute un point à la courbe de charge (milieu de nuit, et niveau juste avant la fin des heures creuses). Aucun réveil sinon, ni en `DRY_RUN`. Test manuel : `docker compose run --rm psacc-sheets-sync --check-wakeup --dry-run`.
 * **Trajets saisis à la main** (p. ex. import d'un export CSV MyPeugeot) : identifiant `M-<début UTC>` (tout ID ne commençant pas par `T-`). La synchro ne les modifie jamais et n'écrit pas un trajet psacc qui chevauche leur plage horaire. Sans conso connue, laisser `E:F` vides : le kWh/100 km (voiture) du `Dashboard` ne compte que les km des trajets dont les kWh sont renseignés.
 * **Km de la première charge** (`Recharges!U2`) : faute de charge précédente, la référence est le dernier compteur des `Trajets` terminés avant le jour de la charge (compteur de fin de journée), à défaut le compteur au départ du premier trajet du jour de la charge.
 * **Charges saisies à la main** (`Recharges`, ID ne commençant pas par `C-`, source p. ex. `manuel (estimation)`) : gardées telles quelles par la synchro, triées par date avec les autres.
@@ -79,7 +80,8 @@ docker compose logs -f psacc-sheets-sync
 | `SPREADSHEET_ID` | — | ID du Google Sheet |
 | `VIN` | vide | VIN de l'e-208 ; vide = premier véhicule électrique de `cars.json` |
 | `SYNC_INTERVAL` | `3600` | Secondes entre deux passages |
-| `DRY_RUN` | `false` | `true` : calcule et journalise sans écrire |
+| `DRY_RUN` | `false` | `true` : calcule et journalise sans écrire (et n'envoie aucun réveil) |
+| `WAKEUP_AT` | `03:00,05:55` | Heures (Paris) de réveil de la voiture, seulement si une charge est en cours ; vide = jamais |
 | `DASHBOARD_PORT` | `8080` | Port du front web (publié sur `LAN_IP` uniquement) |
 | `DASHBOARD_CACHE_SECONDS` | `300` | Durée du cache des données du Sheet côté front |
 | `BASE_PRICE_KWH` | vide | Prix TTC du kWh en option Base |

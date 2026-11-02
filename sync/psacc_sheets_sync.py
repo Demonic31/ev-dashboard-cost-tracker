@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 from datetime import date, datetime, time as dtime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -499,6 +500,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dry-run", action="store_true", help="calcule et affiche sans écrire dans le Sheet")
     parser.add_argument("--once", action="store_true", help="un seul passage puis sortie")
+    parser.add_argument("--check-wakeup", action="store_true",
+                        help="contrôle de charge immédiat (réveil si en charge, sauf --dry-run) puis sortie")
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.debug or os.environ.get("DEBUG") else logging.INFO,
@@ -514,6 +517,16 @@ def main():
     }
     interval = int(os.environ.get("SYNC_INTERVAL", "3600"))
     dry_run = args.dry_run or os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes")
+    psacc_url = os.environ.get("PSACC_URL", "http://psacc:5000").rstrip("/")
+    wakeup_times = parse_wakeup_times(os.environ.get("WAKEUP_AT", "03:00,05:55"))
+
+    if args.check_wakeup:
+        wakeup_if_charging(psacc_url, cfg["vin"] or load_car(cfg["config_dir"])["vin"], dry_run)
+        return
+    if wakeup_times and not args.once:
+        vin = cfg["vin"] or load_car(cfg["config_dir"])["vin"]
+        log.info("réveil si charge en cours à %s", ", ".join(t.strftime("%H:%M") for t in wakeup_times))
+        threading.Thread(target=wakeup_loop, args=(psacc_url, vin, wakeup_times, dry_run), daemon=True).start()
 
     while True:
         started = time.monotonic()
@@ -526,6 +539,52 @@ def main():
         if args.once:
             return
         time.sleep(max(interval - (time.monotonic() - started), 60))
+
+
+# --------------------------------------------------------------------------- réveil pendant la charge
+
+def parse_wakeup_times(raw):
+    """« 03:00,05:55 » -> [dtime(3, 0), dtime(5, 55)] (heure de Paris) ; vide = aucun réveil."""
+    times = []
+    for part in filter(None, (p.strip() for p in raw.split(","))):
+        h, m = part.split(":")
+        times.append(dtime(int(h), int(m)))
+    return sorted(times)
+
+
+def wakeup_if_charging(psacc_url, vin, dry_run):
+    """Réveille la voiture par psacc si son dernier état connu (cache, sans réveil) est « en charge » :
+    la voiture renvoie alors son état et psacc enregistre un point de plus dans battery_curve."""
+    info = requests.get(f"{psacc_url}/get_vehicleinfo/{vin}?from_cache=1", timeout=30).json()
+    elec = next((e for e in info.get("energy") or [] if e.get("type") == "Electric"), {})
+    status = (elec.get("charging") or {}).get("status")
+    if status != "InProgress":
+        log.info("réveil ignoré : charge %s (niveau %s %%)", status or "inconnue", elec.get("level"))
+        return False
+    if dry_run:
+        log.info("[dry-run] charge en cours (niveau %s %%) : réveil non envoyé", elec.get("level"))
+        return False
+    result = requests.get(f"{psacc_url}/wakeup/{vin}", timeout=60).json()
+    if isinstance(result, dict) and result.get("error"):
+        log.warning("réveil refusé : %s", result["error"])
+        return False
+    log.info("charge en cours (niveau %s %%) : réveil demandé", elec.get("level"))
+    return True
+
+
+def wakeup_loop(psacc_url, vin, times, dry_run):
+    """Thread : à chaque heure de `times` (Paris), réveil si une charge est en cours."""
+    while True:
+        now = datetime.now(PARIS)
+        nxt = min(c for c in (datetime.combine(now.date() + timedelta(days=d), t, PARIS)
+                              for d in (0, 1) for t in times) if c > now)
+        log.debug("prochain contrôle de charge : %s", nxt)
+        time.sleep((nxt - datetime.now(PARIS)).total_seconds())
+        try:
+            wakeup_if_charging(psacc_url, vin, dry_run)
+        except Exception:  # pylint: disable=broad-except
+            log.exception("contrôle de charge / réveil impossible")
+        time.sleep(1)
 
 
 if __name__ == "__main__":
