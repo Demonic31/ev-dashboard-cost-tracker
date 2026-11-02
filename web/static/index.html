@@ -10,19 +10,19 @@
   :root {
     --bg: #f4f6f9; --card: #ffffff; --text: #1d2430; --muted: #6b7585; --border: #e3e7ee;
     --accent: #0f766e; --bleu: #2563eb; --bleu-hc: #1e40af; --blanc: #94a3b8; --blanc-hc: #64748b;
-    --rouge: #dc2626; --rouge-hc: #991b1b; --base: #a8a29e; --petrol: #b45309; --good: #15803d; --bad: #b91c1c;
+    --rouge: #dc2626; --rouge-hc: #991b1b; --base: #a8a29e; --petrol: #b45309; --good: #15803d; --bad: #b91c1c; --lvl-l: 40%;
     --shadow: 0 1px 3px rgba(15, 23, 42, .08); --logo: none;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #0f141b; --card: #171e28; --text: #e6ebf2; --muted: #8a96a8; --border: #263040;
-      --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --good: #4ade80; --bad: #f87171;
+      --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --good: #4ade80; --bad: #f87171; --lvl-l: 60%;
       --shadow: none; --logo: invert(1);
     }
   }
   :root[data-theme="dark"] {
     --bg: #0f141b; --card: #171e28; --text: #e6ebf2; --muted: #8a96a8; --border: #263040;
-    --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --good: #4ade80; --bad: #f87171;
+    --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --good: #4ade80; --bad: #f87171; --lvl-l: 60%;
     --shadow: none; --logo: invert(1);
   }
   * { box-sizing: border-box; }
@@ -53,6 +53,18 @@
   .soh .n { font-size: 1.25rem; font-weight: 650; font-variant-numeric: tabular-nums; }
   .soh .gauge { width: 140px; margin-top: 0; }
   .soh small { color: var(--muted); font-size: .76rem; }
+  .car { margin-bottom: 16px; }
+  .car .items { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  @media (max-width: 640px) { .car .items { grid-template-columns: 1fr 1fr; } }
+  .car .label { color: var(--muted); font-size: .78rem; margin-bottom: 2px; }
+  .car .n { font-size: 1.35rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .car .n small { font-size: .8rem; color: var(--muted); font-weight: 400; }
+  .car .level { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; margin-top: 6px; }
+  .car .level span { display: block; height: 100%; border-radius: 4px;
+    background: linear-gradient(90deg, #dc2626, #f59e0b 35%, #16a34a 75%); }
+  .state { display: inline-block; margin-top: 4px; padding: 2px 10px; border-radius: 999px; font-size: .85rem; font-weight: 600;
+    color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); }
+  .car .sub { color: var(--muted); font-size: .76rem; margin-top: 4px; }
   .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
   .kpi .label { color: var(--muted); font-size: .8rem; }
   .kpi .value { font-size: 1.45rem; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
@@ -126,6 +138,11 @@
   <div class="error" id="error"></div>
 
   <section class="card soh" id="soh" hidden></section>
+
+  <section class="card car" id="car" hidden>
+    <h2>🚗 Voiture <small id="carAt"></small></h2>
+    <div class="items" id="carItems"></div>
+  </section>
 
   <section class="card period">
     <label for="preset">Période</label>
@@ -262,6 +279,34 @@ function renderHealth() {
   el.innerHTML = `<span class="label">🔋 Santé batterie (SOH)</span><span class="n">${fr(h.soh, 0)} %</span>
     <div class="gauge"><span style="width:${Math.min(100, h.soh)}%;background:var(--accent)"></span></div>
     <small>indicateur Stellantis (résistance interne) relevé par psacc${data.battery_kwh ? ` · batterie ${fr(data.battery_kwh, 0)} kWh neuve` : ""}</small>`;
+}
+
+// Statuts de charge de l'API Stellantis -> libellé et couleur
+const CHARGE_STATES = { InProgress: ["En charge", "--good"], Finished: ["Terminée", "--bleu"], Stopped: ["Arrêtée", "--petrol"],
+                        Failure: ["Échec", "--bad"], Disconnected: ["Débranchée", "--muted"] };
+const isoDuration = d => { const m = /PT(?:(\d+)H)?(?:(\d+)M)?/.exec(d || ""); return m && (m[1] || m[2]) ? `${+m[1] || 0} h ${String(+m[2] || 0).padStart(2, "0")}` : ""; };
+
+function renderCar() {
+  const el = document.getElementById("car"), c = data.car || {};
+  el.hidden = false;
+  if (c.error || c.level == null) {
+    document.getElementById("carAt").textContent = "";
+    document.getElementById("carItems").innerHTML = `<div class="empty">État indisponible : ${esc(c.error || "pas de relevé psacc")}</div>`;
+    return;
+  }
+  const lvl = Math.max(0, Math.min(100, num(c.level)));
+  const at = c.updated_at ? new Date(c.updated_at.replace(" ", "T")) : null;
+  document.getElementById("carAt").textContent = at ? "dernier relevé le " + at.toLocaleString("fr-FR",
+    { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+  const [label, color] = CHARGE_STATES[c.status] || [c.status || "Inconnue", "--muted"];
+  const extra = c.status === "InProgress" ? [c.charging_rate ? `${fr(c.charging_rate, 0)} km/h` : "",
+    isoDuration(c.remaining_time) && `fin dans ${isoDuration(c.remaining_time)}`].filter(Boolean).join(" · ") : "";
+  document.getElementById("carItems").innerHTML = `
+    <div><div class="label">Niveau</div><div class="n" style="color:hsl(${1.2 * lvl} 70% var(--lvl-l))">${fr(lvl, 0)} %</div>
+      <div class="level"><span style="width:${lvl}%;background-size:${lvl ? 10000 / lvl : 100}% 100%"></span></div></div>
+    <div><div class="label">Autonomie estimée</div><div class="n">${fr(c.autonomy, 0)} <small>km</small></div></div>
+    <div><div class="label">Charge</div><span class="state" style="--c:var(${color})">${esc(label)}</span>${extra ? `<div class="sub">${esc(extra)}</div>` : ""}</div>
+    <div><div class="label">Compteur</div><div class="n">${fr(c.mileage, 0)} <small>km</small></div></div>`;
 }
 
 function renderKpis() {
@@ -460,7 +505,7 @@ async function load(force = false) {
     data = body;
     err.style.display = "none";
     document.getElementById("fetched").textContent = "Données du Sheet au " + new Date(data.fetched_at).toLocaleString("fr-FR");
-    renderHealth(); renderSeason(); render();
+    renderHealth(); renderCar(); renderSeason(); render();
   } catch (e) {
     err.textContent = "Impossible de lire le Google Sheet : " + e.message;
     err.style.display = "block";

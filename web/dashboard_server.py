@@ -161,26 +161,60 @@ FUEL_API = ("https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/"
             "prix-des-carburants-en-france-flux-instantane-v2/records")
 
 
-class BatteryHealth:
-    """SOH de la batterie relevé par psacc (champ « resistance » de l'API Stellantis), lu sur son API web
-    (lecture seule : /get_vehicles et /battery/soh, sans appel à Stellantis)."""
+class Psacc:
+    """Lecture seule de l'API web de psacc (réseau Docker interne), sans appel aux serveurs Stellantis."""
 
-    def __init__(self, psacc_url, vin):
-        self.psacc_url, self.vin = psacc_url.rstrip("/"), vin
+    def __init__(self, url, vin):
+        self.url, self._vin = url.rstrip("/"), vin
+
+    def vin(self):
+        if not self._vin:
+            cars = requests.get(f"{self.url}/get_vehicles", timeout=10).json()
+            self._vin = next(c["vin"] for c in cars if (c.get("battery_power") or 0) > 0)
+        return self._vin
+
+    def get(self, path):
+        return requests.get(f"{self.url}{path}", timeout=15).json()
+
+
+class BatteryHealth:
+    """SOH de la batterie relevé par psacc (champ « resistance » de l'API Stellantis)."""
+
+    def __init__(self, psacc):
+        self.psacc = psacc
 
     @cached(3600)
     def get(self):
         try:
-            vin = self.vin
-            if not vin:
-                cars = requests.get(f"{self.psacc_url}/get_vehicles", timeout=10).json()
-                vin = next(c["vin"] for c in cars if (c.get("battery_power") or 0) > 0)
-            soh = requests.get(f"{self.psacc_url}/battery/soh/{vin}", timeout=10).json().get("soh")
+            soh = self.psacc.get(f"/battery/soh/{self.psacc.vin()}").get("soh")
             if soh is None:
                 return {"error": "aucun SOH relevé par psacc"}
             return {"soh": soh, "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds")}
         except (requests.RequestException, ValueError, StopIteration) as exc:
             log.warning("SOH indisponible : %s", exc)
+            return {"error": str(exc) or type(exc).__name__}
+
+
+class CarStatus:
+    """Dernier état connu de la voiture (niveau, autonomie, charge, compteur), lu dans le cache de psacc
+    (from_cache=1 : la voiture n'est pas réveillée, les valeurs datent de son dernier envoi)."""
+
+    def __init__(self, psacc):
+        self.psacc = psacc
+
+    @cached(300)
+    def get(self):
+        try:
+            info = self.psacc.get(f"/get_vehicleinfo/{self.psacc.vin()}?from_cache=1")
+            elec = next(e for e in info.get("energy") or [] if e.get("type") == "Electric")
+            charging = elec.get("charging") or {}
+            odo = info.get("timed_odometer") or {}
+            return {"level": elec.get("level"), "autonomy": elec.get("autonomy"), "updated_at": elec.get("updated_at"),
+                    "status": charging.get("status"), "plugged": charging.get("plugged"),
+                    "charging_rate": charging.get("charging_rate"), "remaining_time": charging.get("remaining_time"),
+                    "mileage": odo.get("mileage"), "mileage_at": odo.get("updated_at")}
+        except (requests.RequestException, ValueError, StopIteration) as exc:
+            log.warning("état de la voiture indisponible : %s", exc)
             return {"error": str(exc) or type(exc).__name__}
 
 
@@ -227,7 +261,7 @@ def offers_config():
             "petrol_l_100km": env_price("PETROL_L_100KM")}
 
 
-def make_handler(mirror, season, fuel, offers, battery_kwh, health):
+def make_handler(mirror, season, fuel, offers, battery_kwh, health, car):
     class Handler(BaseHTTPRequestHandler):
         server_version = "e208-dashboard"
 
@@ -251,7 +285,7 @@ def make_handler(mirror, season, fuel, offers, battery_kwh, health):
                 try:
                     force = "refresh=1" in self.path
                     data = dict(mirror.get(force=force), season=season.get(force=force), battery_kwh=battery_kwh,
-                                health=health.get(force=force),
+                                health=health.get(force=force), car=car.get(force=force),
                                 offers=dict(offers, fuel=fuel.get() if offers["petrol_l_100km"] else None))
                     self.send(200, json.dumps(data, ensure_ascii=False).encode(), "application/json; charset=utf-8")
                 except Exception as exc:  # pylint: disable=broad-except
@@ -274,10 +308,11 @@ def main():
     season = TempoSeason(os.environ.get("TEMPO_API_URL", "https://www.api-couleur-tempo.fr/api"))
     fuel = FuelPrice(os.environ.get("PETROL_FUEL", "sp98"), os.environ.get("PETROL_DEPARTEMENT", "").strip())
     offers = offers_config()
-    health = BatteryHealth(os.environ.get("PSACC_URL", "http://psacc:5000"), os.environ.get("VIN") or None)
+    psacc = Psacc(os.environ.get("PSACC_URL", "http://psacc:5000"), os.environ.get("VIN") or None)
+    health, car = BatteryHealth(psacc), CarStatus(psacc)
     port = int(os.environ.get("PORT", "8080"))
     log.info("front e-208 sur le port %d (comparatif : %s)", port, json.dumps(offers))
-    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, offers, env_price("BATTERY_KWH"), health)).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, offers, env_price("BATTERY_KWH"), health, car)).serve_forever()
 
 
 if __name__ == "__main__":
