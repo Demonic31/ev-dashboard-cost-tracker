@@ -230,7 +230,8 @@ function computeView() {
     const withKm = charges.filter(r => num(r[C.km]) > 0), km = sum(charges, C.km);
     const cost = sum(charges, C.cost), kwh = sum(charges, C.kwh);
     kpi = [cost, kwh, km, ratio(sum(withKm, C.cost), km, 100), ratio(sum(withKm, C.kwh), km, 100), ratio(cost, kwh),
-           charges.length, sum(trips, T.km), ratio(sum(trips, T.kwh), sum(trips, T.km), 100)];
+           // kWh/100 km voiture : seulement les km des trajets dont la conso est connue (saisies manuelles sans kWh)
+           charges.length, sum(trips, T.km), ratio(sum(trips, T.kwh), sum(trips.filter(r => num(r[T.kwh]) > 0), T.km), 100)];
   }
   const tranches = all ? data.tranches.map(t => num(t.kwh))
     : TRANCHES.map((_, i) => sum(charges, C.slots + i) * num(data.loss_coef || 1));
@@ -289,7 +290,9 @@ function renderOffers() {
   const o = data.offers || {}, coef = num(data.loss_coef || 1), rows = view.charges;
   const hcKwh = rows.reduce((s, r) => s + num(r[C.slots]) + num(r[C.slots + 2]) + num(r[C.slots + 4]), 0) * coef;
   const hpKwh = rows.reduce((s, r) => s + num(r[C.slots + 1]) + num(r[C.slots + 3]) + num(r[C.slots + 5]), 0) * coef;
-  const km = num(view.kpi[2]), [hcS, hcE] = data.hc_hours;
+  // km de l'équivalent essence : trajets enregistrés ou compteur entre recharges, le plus grand des deux
+  const odoKm = num(view.kpi[2]), tripKm = num(view.kpi[7]), km = Math.max(odoKm, tripKm), [hcS, hcE] = data.hc_hours;
+  const kmSource = !km ? "aucun trajet ni relevé compteur" : tripKm >= odoKm ? "trajets enregistrés" : "compteur entre recharges";
   const hcLabel = `HC ${hcS}h–${hcE}h`;
   const list = [{ name: "Tempo", sub: "ton contrat (Sheet)", cost: view.cost, color: "--accent", ref: true }];
   list.push(o.base ? { name: "Base", sub: `${fr(o.base, 4)} €/kWh`, cost: view.kwh * o.base, color: "--base" }
@@ -308,7 +311,7 @@ function renderOffers() {
   const fuel = o.fuel;
   if (o.petrol_l_100km && fuel && !fuel.error)
     list.push({ name: `Essence ${fuel.fuel}`, sub: `${fr(o.petrol_l_100km, 1)} L/100 km × ${fr(fuel.price, 3)} €/L ` +
-      `(moyenne ${fuel.zone}, ${fuel.stations} stations, ${fuel.days} derniers jours)`, cost: km * o.petrol_l_100km / 100 * fuel.price, color: "--petrol" });
+      `(moyenne ${fuel.zone}, ${fuel.stations} stations, ${fuel.days} derniers jours, relevé le ${new Date(fuel.fetched_at).toLocaleDateString("fr-FR")})`, cost: km * o.petrol_l_100km / 100 * fuel.price, color: "--petrol" });
   else list.push({ name: "Essence", missing: fuel?.error ? "prix carburant indisponible : " + fuel.error : "PETROL_L_100KM" });
 
   const max = Math.max(...list.map(x => x.cost || 0)) || 1, ref = view.cost;
@@ -323,7 +326,7 @@ function renderOffers() {
   }).join("") + `<ul class="notes">
     <li>Coût de l'énergie seule (kWh facturés = kWh batterie × ${fr(coef, 2)}), abonnements non compris.</li>
     <li>Heures creuses et Zen supposent les mêmes heures creuses que Tempo (${hcLabel}, onglet Paramètres) ; Zen est réparti au prorata du temps de charge.</li>
-    <li>Essence : ${fr(km, 0)} km parcourus sur la période (compteur entre recharges).</li></ul>`;
+    <li>Essence : ${fr(km, 0)} km parcourus sur la période (${kmSource}) ; prix du carburant relu chaque semaine.</li></ul>`;
 }
 
 // ------------------------------------------------------------------ graphiques

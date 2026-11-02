@@ -170,7 +170,7 @@ class FuelPrice:
         self.fuel, self.departement, self.days = fuel.lower(), departement, days
         self.http = requests.Session()
 
-    @cached(6 * 3600)
+    @cached(7 * 24 * 3600)  # une relève par semaine
     def get(self):
         where = f"{self.fuel}_maj >= now(days=-{self.days})"
         if self.departement:
@@ -228,7 +228,7 @@ def make_handler(mirror, season, fuel, offers):
                 try:
                     force = "refresh=1" in self.path
                     data = dict(mirror.get(force=force), season=season.get(force=force),
-                                offers=dict(offers, fuel=fuel.get(force=force) if offers["petrol_l_100km"] else None))
+                                offers=dict(offers, fuel=fuel.get() if offers["petrol_l_100km"] else None))
                     self.send(200, json.dumps(data, ensure_ascii=False).encode(), "application/json; charset=utf-8")
                 except Exception as exc:  # pylint: disable=broad-except
                     log.exception("lecture du Sheet impossible")

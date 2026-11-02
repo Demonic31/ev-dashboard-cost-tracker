@@ -340,7 +340,7 @@ def same_cell(a, b):
 
 def plan_tab(tab, last_col, existing, rows, key_of_cell=str, sort_col=1):
     """Calcule l'upsert d'un onglet trié par date, en n'écrivant que dans A:<last_col> (aucune insertion de
-    ligne : les formules du Sheet, dont U3 sur des plages fixes, ne doivent pas être décalées).
+    ligne : les formules du Sheet, dont U2 sur des plages fixes, ne doivent pas être décalées).
 
     Les lignes existantes sont mises à jour en place, les nouvelles ajoutées à leur rang chronologique ; une
     ligne existante (même saisie à la main) n'est déplacée que si une nouvelle doit s'intercaler avant elle.
@@ -406,6 +406,25 @@ def trip_row(t):
             round(t["kwh_100"], 2), round(t["mileage"], 1)]
 
 
+def drop_overlapping_manual(trip_rows, existing):
+    """Écarte les trajets psacc qui chevauchent un trajet saisi à la main (ID ne commençant pas par « T- »,
+    p. ex. importé d'un export MyPeugeot) : la saisie manuelle fait foi sur sa plage horaire."""
+    manual = []
+    for r in existing:
+        if len(r) >= 3 and r[0] not in ("", None) and not str(r[0]).startswith("T-"):
+            start, end = to_serial(r[1]), to_serial(r[2])
+            if start is not None and end is not None:
+                manual.append((start, end))
+    kept = []
+    for row in trip_rows:
+        start, end = to_serial(row[1]), to_serial(row[2])
+        if any(start < m_end and m_start < end for m_start, m_end in manual):
+            log.info("%s ignoré : chevauche un trajet saisi à la main", row[0])
+        else:
+            kept.append(row)
+    return kept
+
+
 def run_once(cfg, dry_run):
     now = datetime.now(UTC)
     with tempfile.TemporaryDirectory() as tmp:
@@ -444,6 +463,7 @@ def run_once(cfg, dry_run):
     ex_colors, ex_charges, ex_trips = sheets.read([f"'{TAB_COLORS}'!A2:B", f"'{TAB_CHARGES}'!A2:N",
                                                    f"'{TAB_TRIPS}'!A2:G"])
     color_rows = [[d.isoformat(), c] for d, c in sorted(colors.items())]
+    trip_rows = drop_overlapping_manual(trip_rows, ex_trips)
     plans = {
         TAB_COLORS: plan_tab(TAB_COLORS, "B", ex_colors, color_rows, key_of_cell=serial_to_day, sort_col=0),
         TAB_CHARGES: plan_tab(TAB_CHARGES, "N", ex_charges, charge_rows),
