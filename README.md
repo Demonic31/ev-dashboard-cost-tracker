@@ -8,6 +8,15 @@ Enregistre automatiquement chaque recharge et chaque trajet d'une **Peugeot e-20
 | `psacc-sheets-sync` | Petit service Python ([`sync/psacc_sheets_sync.py`](sync/psacc_sheets_sync.py)) qui lit une copie de la base psacc, récupère les couleurs Tempo et met à jour le Sheet toutes les heures. |
 | `e208-dashboard` | Front web en lecture seule ([`web/`](web/)) sur le port 8080 (réseau local uniquement) : copie fidèle des valeurs du Sheet, filtres par période, saison Tempo, comparatif des offres. |
 
+## 📸 Aperçu
+
+Captures du front web avec des **données fictives**.
+
+| | Clair | Sombre |
+| :--- | :---: | :---: |
+| **PC** | <img src="docs/screenshots/pc-light.png" alt="Dashboard sur PC, thème clair" width="420"> | <img src="docs/screenshots/pc-dark.png" alt="Dashboard sur PC, thème sombre" width="420"> |
+| **Mobile** | <img src="docs/screenshots/mobile-light.png" alt="Dashboard sur mobile, thème clair" width="240"> | <img src="docs/screenshots/mobile-dark.png" alt="Dashboard sur mobile, thème sombre" width="240"> |
+
 ---
 
 ## 📋 Prérequis
