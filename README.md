@@ -108,9 +108,9 @@ Puis ouvrir `http://<LAN_IP>:8080`. La page affiche ce que le Sheet a calculé, 
   * **Base** : kWh × `BASE_PRICE_KWH` ;
   * **Heures creuses** : la part HC/HP de chaque charge, tirée des colonnes `H:M`, avec les mêmes heures creuses que Tempo (onglet `Paramètres`) ;
   * **Zen Week-End + HC** : prix bas le week-end, les jours fériés et en heures creuses en semaine, au prorata du temps de charge ;
-  * **Essence** : km parcourus (le plus grand entre les trajets enregistrés et le compteur entre recharges) × `PETROL_L_100KM` × prix moyen du carburant. Ce prix est la moyenne des stations mises à jour ces 3 derniers jours, en France ou dans un département, d'après les [données officielles prix-carburants](https://data.economie.gouv.fr/explore/dataset/prix-des-carburants-en-france-flux-instantane-v2/), relues une fois par semaine (et au redémarrage du conteneur ; le bouton « Actualiser » ne les relit pas).
+  * **Essence** : km parcourus (le plus grand entre les trajets enregistrés et le compteur entre recharges) × `PETROL_L_100KM` × prix moyen du carburant. Ce prix est la moyenne des stations mises à jour ces 3 derniers jours, en France ou dans un département, d'après les [données officielles prix-carburants](https://data.economie.gouv.fr/explore/dataset/prix-des-carburants-en-france-flux-instantane-v2/), relues une fois par semaine (et au redémarrage du conteneur ; le bouton 🔄 « Actualiser » ne les relit pas).
 
-Le serveur relit le Sheet au plus toutes les `DASHBOARD_CACHE_SECONDS`. Le bouton « Actualiser » force la relecture. Le compte de service n'y a qu'un accès en lecture.
+Le serveur relit le Sheet au plus toutes les `DASHBOARD_CACHE_SECONDS`. Le bouton 🔄 (Actualiser) force la relecture. Le compte de service n'y a qu'un accès en lecture.
 
 ## 🔄 Mise à jour
 
