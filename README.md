@@ -165,9 +165,11 @@ L=$(docker compose run --rm -T e208-dashboard --setup-totp | grep '^DASHBOARD_TO
 
 ```bash
 cp preprod/.env.example preprod/.env && chmod 600 preprod/.env   # chemins de la pile principale, mot de passe, Synology
-docker compose --env-file preprod/.env -f preprod/docker-compose.yml up -d --build
-docker compose --env-file preprod/.env -f preprod/docker-compose.yml stop   # arrêt quand on ne s'en sert plus (conteneur gardé)
+preprod/preprod.sh on    # (re)lance le dashboard avec le code du worktree
+preprod/preprod.sh off   # l'arrête et affiche à sa place la page « PREPROD en pause »
 ```
+
+Arrêtée, la PREPROD n'est pas coupée du Synology : un petit serveur (`web/pause_server.py`, même image, profil `pause`) répond sur le même port avec une page « PREPROD en pause » aux couleurs du dashboard (code 503), au lieu de la page d'erreur du Synology. `PAUSE_LINK` (dans `preprod/.env`) y ajoute un bouton vers la PROD.
 
 ## 🔄 Mise à jour
 

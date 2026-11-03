@@ -30,6 +30,19 @@ services:
     secrets: [google-sa]
     networks: [psacc]
 
+  # Page « PREPROD en pause », sur le même port quand le dashboard est arrêté (sinon le Synology affiche
+  # sa propre page d'erreur). Ne démarre qu'avec le profil « pause » : voir preprod/preprod.sh
+  pause:
+    image: e208-preprod-dashboard:local
+    build: ../web
+    profiles: [pause]
+    restart: unless-stopped
+    entrypoint: ["python", "-I", "/app/pause_server.py"]
+    environment:
+      PAUSE_LINK: ${PAUSE_LINK:-}
+    ports:
+      - "${LAN_IP:?LAN_IP manquant}:${PREPROD_PORT:-8081}:8080"
+
 networks:
   # Réseau de la pile principale, pour lire l'API de psacc
   psacc:
