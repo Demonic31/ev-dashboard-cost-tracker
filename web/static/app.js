@@ -450,7 +450,7 @@ async function load(force = false) {
 }
 
 const preset = document.getElementById("preset");
-preset.value = store.get("e208.preset") || "all";
+preset.value = store.get("e208.preset") || "month";  // par défaut : mois en cours
 document.getElementById("from").value = store.get("e208.from") || "";
 document.getElementById("to").value = store.get("e208.to") || "";
 document.getElementById("customDates").hidden = preset.value !== "custom";
