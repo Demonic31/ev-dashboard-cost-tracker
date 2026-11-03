@@ -153,6 +153,7 @@ L=$(docker compose run --rm -T e208-dashboard --setup-totp | grep '^DASHBOARD_TO
 ```
 
 * **Code TOTP** (RFC 6238, 30 s) : accepté pour la tranche en cours, la précédente ou la suivante (décalage d'horloge) ; un code déjà utilisé est refusé ; il n'est vérifié qu'avec le bon mot de passe. La clé ne peut pas être hachée (le serveur en a besoin pour calculer les codes) : elle reste dans `.env`, jamais dans git. Téléphone perdu : relancer `--setup-totp` depuis le serveur.
+* **Page de connexion** : logo « voiture électrique » (aussi favicon et icône d'application), titre « Dashboard VE · Login », champs mot de passe et code, case « Se souvenir de moi » et, sous le formulaire, un bouton de thème clair / sombre (choix partagé avec le dashboard).
 * **Session** : cookie signé (HMAC), `HttpOnly`, `SameSite=Lax`, `Secure` derrière le Synology ; 12 h, ou 30 jours avec « Se souvenir de moi », prolongés de 30 jours à chaque utilisation après un jour (on ne se reconnecte que si le dashboard reste plus d'un mois sans être ouvert). Lien « Déconnexion » dans l'en-tête.
 * **Application Android (PWA)** : depuis Chrome sur l'adresse HTTPS publique, menu ⋮ → « Installer l'application » (l'adresse locale en HTTP ne peut pas être installée). En mode application, « Se souvenir de moi » est coché d'office. Le service worker ne garde en cache qu'une page « Hors connexion », jamais les données. Installer avec Chrome (Brave ne pose qu'un raccourci) ; si Chrome demande un nom ou si l'app garde une barre de titre, un VPN / bloqueur de pubs qui filtre le HTTPS a retiré le lien du manifeste : l'installer en le coupant, puis exclure l'adresse du filtrage.
 * **Anti-brute-force** (mot de passe ou code) : après 5 échecs en 15 min, l'IP du visiteur est bloquée 15 min ; comparaison en temps constant et 1 s d'attente par échec. Les tentatives sont journalisées (`docker logs`).
@@ -160,11 +161,12 @@ L=$(docker compose run --rm -T e208-dashboard --setup-totp | grep '^DASHBOARD_TO
 
 ### 🧪 PREPROD
 
-[`preprod/docker-compose.yml`](preprod/docker-compose.yml) lance un second dashboard (projet `e208-preprod`, port `8081` sur l'IP LAN) avec le code de la branche en cours, pour tester sans toucher à la PROD. Il lit le même Sheet et la base et l'API psacc de la pile principale, en lecture seule, sans synchro ni réveil. Son app installable s'appelle « VE PREPROD » (`APP_LABEL`), pour la distinguer de celle de la PROD.
+[`preprod/docker-compose.yml`](preprod/docker-compose.yml) lance un second dashboard (projet `e208-preprod`, port `8081` sur l'IP LAN) avec le code de la branche en cours, pour tester sans toucher à la PROD. Il lit le même Sheet et la base et l'API psacc de la pile principale, en lecture seule, sans synchro ni réveil. Son app installable s'appelle « VE PREPROD », avec une icône et un logo de mire marqués « TEST » (`APP_LABEL`), pour la distinguer de celle de la PROD.
 
 ```bash
 cp preprod/.env.example preprod/.env && chmod 600 preprod/.env   # chemins de la pile principale, mot de passe, Synology
 docker compose --env-file preprod/.env -f preprod/docker-compose.yml up -d --build
+docker compose --env-file preprod/.env -f preprod/docker-compose.yml stop   # arrêt quand on ne s'en sert plus (conteneur gardé)
 ```
 
 ## 🔄 Mise à jour

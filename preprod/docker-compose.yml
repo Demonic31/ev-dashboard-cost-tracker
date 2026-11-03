@@ -20,7 +20,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-}
       TRUSTED_PROXY: ${TRUSTED_PROXY:-}
       LOGIN_SCOPE: ${LOGIN_SCOPE:-proxy}
-      # nom de l'app installée sur le téléphone : « VE PREPROD », pour la distinguer de la PROD
+      # app installée sur le téléphone : « VE PREPROD » et icône marquée « TEST », pour la distinguer de la PROD
       APP_LABEL: PREPROD
     ports:
       # Lié à l'IP LAN uniquement : le reverse proxy Synology vient le chercher ici
