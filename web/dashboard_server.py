@@ -39,9 +39,15 @@ SHEET_EPOCH = datetime(1899, 12, 30)
 COLORS = {1: "BLEU", 2: "BLANC", 3: "ROUGE"}
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 # Accessibles sans connexion : ce dont la page de connexion a besoin
-PUBLIC_PATHS = ("/healthz", "/static/theme.js", "/static/login.js", "/static/favicon.svg", "/static/apple-touch-icon.png")
+PUBLIC_PATHS = ("/healthz", "/sw.js", "/static/theme.js", "/static/login.js", "/static/pwa.js",
+                "/static/favicon.svg", "/static/apple-touch-icon.png", "/static/manifest.webmanifest",
+                "/static/icon-192.png", "/static/icon-512.png", "/static/icon-maskable-512.png",
+                "/static/offline.html")
 STATIC_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml",
-                ".png": "image/png"}
+                ".png": "image/png", ".html": "text/html; charset=utf-8",
+                ".webmanifest": "application/manifest+json"}
+# Libellé ajouté au nom de l'app installée (PWA), ex. « PREPROD » ; vide en PROD
+APP_LABEL = os.environ.get("APP_LABEL", "").strip()
 # Tout est servi depuis le conteneur (Chart.js et logo compris) : pas de script ni de ressource externe
 SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
@@ -359,6 +365,7 @@ class PasswordGate:
     COOKIE = "e208_session"
     MAX_FAILURES, BLOCK_SECONDS = 5, 15 * 60
     SESSION_SECONDS, REMEMBER_SECONDS = 12 * 3600, 30 * 86400
+    RENEW_AFTER = 86400  # une session « se souvenir » utilisée après 1 jour repart pour 30 jours
 
     def __init__(self, password_hash, secret, trusted_proxy, scope, totp_secret=""):
         self.enabled = bool(password_hash)
@@ -425,21 +432,34 @@ class PasswordGate:
 
     def cookie(self, remember, secure):
         expiry = int(time.time()) + (self.REMEMBER_SECONDS if remember else self.SESSION_SECONDS)
-        attrs = ["Path=/", "HttpOnly", "SameSite=Strict"] + (["Secure"] if secure else []) + \
+        attrs = ["Path=/", "HttpOnly", "SameSite=Lax"] + (["Secure"] if secure else []) + \
             ([f"Max-Age={self.REMEMBER_SECONDS}"] if remember else [])
         return "; ".join([f"{self.COOKIE}={expiry}.{self.sign(expiry)}"] + attrs)
 
     def clear_cookie(self, secure):
-        return "; ".join([f"{self.COOKIE}=", "Path=/", "HttpOnly", "SameSite=Strict", "Max-Age=0"] +
+        return "; ".join([f"{self.COOKIE}=", "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"] +
                          (["Secure"] if secure else []))
 
-    def valid(self, cookie_header):
+    def expiry(self, cookie_header):
+        """Échéance de la session portée par le cookie, ou 0 si absente, expirée ou mal signée."""
         try:
             morsel = SimpleCookie(cookie_header or "").get(self.COOKIE)
         except CookieError:
-            return False
+            return 0
         expiry, _, sig = (morsel.value if morsel else "").partition(".")
-        return expiry.isdigit() and int(expiry) > time.time() and hmac.compare_digest(sig, self.sign(int(expiry)))
+        ok = expiry.isdigit() and int(expiry) > time.time() and hmac.compare_digest(sig, self.sign(int(expiry)))
+        return int(expiry) if ok else 0
+
+    def valid(self, cookie_header):
+        return bool(self.expiry(cookie_header))
+
+    def renewal(self, cookie_header, secure):
+        """Cookie neuf de 30 jours pour une session « se souvenir » entamée depuis plus de RENEW_AFTER
+        (les sessions courtes de 12 h ne sont jamais prolongées) ; None s'il n'y a rien à renouveler."""
+        left = self.expiry(cookie_header) - time.time()
+        if self.SESSION_SECONDS < left < self.REMEMBER_SECONDS - self.RENEW_AFTER:
+            return self.cookie(True, secure)
+        return None
 
 
 TOTP_FIELD = """<label>Code de l'application d'authentification
@@ -475,6 +495,12 @@ def make_handler(mirror, season, fuel, offers, battery_kwh, health, car, curves,
 
         def redirect(self, location, cookie=None):
             self.send(303, b"", "text/plain", {"Location": location, **({"Set-Cookie": cookie} if cookie else {})})
+
+        def renewed(self):
+            """En-tête Set-Cookie prolongeant la session « se souvenir » (PWA : pas de reconnexion à chaque lancement)."""
+            addr = self.client_address[0]
+            cookie = gate.renewal(self.headers.get("Cookie"), gate.via_proxy(addr)) if gate.required(addr) else None
+            return {"Set-Cookie": cookie} if cookie else None
 
         def to_https(self):
             """Arrivée en HTTP via le proxy : redirection permanente vers la même adresse en HTTPS."""
@@ -528,17 +554,27 @@ def make_handler(mirror, season, fuel, offers, battery_kwh, health, car, curves,
                     self.send(401, b'{"error": "connexion requise"}', "application/json")
                 else:
                     self.redirect("/login")
+            elif path == "/sw.js":
+                # servi à la racine pour que le service worker couvre tout le site
+                with open(os.path.join(STATIC_DIR, "sw.js"), "rb") as f:
+                    self.send(200, f.read(), STATIC_TYPES[".js"])
             elif path.startswith("/static/"):
                 file = os.path.realpath(os.path.join(STATIC_DIR, path[len("/static/"):]))
                 ctype = STATIC_TYPES.get(os.path.splitext(file)[1])
                 if file.startswith(STATIC_DIR + os.sep) and ctype and os.path.isfile(file):
                     with open(file, "rb") as f:
-                        self.send(200, f.read(), ctype)
+                        body = f.read()
+                    if APP_LABEL and path == "/static/manifest.webmanifest":
+                        manifest = json.loads(body)
+                        manifest["name"] += f" {APP_LABEL}"
+                        manifest["short_name"] += f" {APP_LABEL}"
+                        body = json.dumps(manifest, ensure_ascii=False).encode()
+                    self.send(200, body, ctype)
                 else:
                     self.send(404, b"not found", "text/plain")
             elif path in ("/", "/index.html"):
                 with open(os.path.join(STATIC_DIR, "index.html"), "rb") as f:
-                    self.send(200, f.read(), "text/html; charset=utf-8")
+                    self.send(200, f.read(), "text/html; charset=utf-8", self.renewed())
             elif path == "/api/data":
                 try:
                     force = "refresh=1" in self.path
@@ -547,7 +583,8 @@ def make_handler(mirror, season, fuel, offers, battery_kwh, health, car, curves,
                                 charge_curves=curves.get(force=force),
                                 offers=dict(offers, fuel=fuel.get() if offers["petrol_l_100km"] else None),
                                 auth=gate.required(addr))
-                    self.send(200, json.dumps(data, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+                    self.send(200, json.dumps(data, ensure_ascii=False).encode(), "application/json; charset=utf-8",
+                              self.renewed())
                 except Exception as exc:  # pylint: disable=broad-except
                     log.exception("lecture du Sheet impossible")
                     self.send(502, json.dumps({"error": str(exc)}).encode(), "application/json")

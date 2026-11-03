@@ -11,6 +11,10 @@ button.addEventListener("click", () => {
   document.documentElement.dataset.theme = theme;
   try { localStorage.setItem("theme", theme); } catch (e) {}
   render();
+  applyThemeColor();
 });
 systemDark.addEventListener("change", render);
 render();
+
+// Lancée comme application (PWA) : on garde la connexion par défaut, sinon Android la perd à chaque fermeture
+if (matchMedia("(display-mode: standalone)").matches) document.querySelector("input[name=remember]").checked = true;

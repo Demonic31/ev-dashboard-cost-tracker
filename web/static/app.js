@@ -481,6 +481,7 @@ document.getElementById("theme").addEventListener("click", () => {
   document.documentElement.dataset.theme = theme;
   try { localStorage.setItem("theme", theme); } catch (e) {}
   renderThemeButton();
+  applyThemeColor();
   if (data) { renderCharts(); renderTable(); }
 });
 systemDark.addEventListener("change", () => { renderThemeButton(); if (data) { renderCharts(); renderTable(); } });
