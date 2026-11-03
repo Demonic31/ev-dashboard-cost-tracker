@@ -40,13 +40,15 @@ COLORS = {1: "BLEU", 2: "BLANC", 3: "ROUGE"}
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 # Accessibles sans connexion : ce dont la page de connexion a besoin
 PUBLIC_PATHS = ("/healthz", "/sw.js", "/static/theme.js", "/static/login.js", "/static/pwa.js",
-                "/static/favicon.svg", "/static/apple-touch-icon.png", "/static/manifest.webmanifest",
-                "/static/icon-192.png", "/static/icon-512.png", "/static/icon-maskable-512.png",
-                "/static/offline.html")
+                "/static/favicon.svg", "/static/favicon-test.svg", "/static/apple-touch-icon.png",
+                "/static/manifest.webmanifest", "/static/icon-192.png", "/static/icon-512.png",
+                "/static/icon-maskable-512.png", "/static/icon-192-test.png", "/static/icon-512-test.png",
+                "/static/icon-maskable-512-test.png", "/static/offline.html")
 STATIC_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml",
                 ".png": "image/png", ".html": "text/html; charset=utf-8",
                 ".webmanifest": "application/manifest+json"}
-# Libellé ajouté au nom de l'app installée (PWA), ex. « PREPROD » ; vide en PROD
+# Libellé ajouté au nom de l'app installée (PWA), ex. « PREPROD » : icônes et logo de la mire marqués « TEST » ;
+# vide en PROD
 APP_LABEL = os.environ.get("APP_LABEL", "").strip()
 # Tout est servi depuis le conteneur (Chart.js et logo compris) : pas de script ni de ressource externe
 SECURITY_HEADERS = {
@@ -471,6 +473,9 @@ TOTP_FIELD = """<label>Code de l'application d'authentification
 def login_page(message="", totp=False):
     with open(os.path.join(STATIC_DIR, "login.html"), encoding="utf-8") as f:
         html = f.read()
+    if APP_LABEL:  # PREPROD : logo marqué « TEST »
+        html = html.replace('class="brand" src="static/favicon.svg"',
+                            'class="brand test" src="static/favicon-test.svg"')
     esc = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return html.replace("{{message}}", f'<p class="error">{esc}</p>' if message else "") \
         .replace("{{totp}}", TOTP_FIELD if totp else "").encode()
@@ -568,6 +573,8 @@ def make_handler(mirror, season, fuel, offers, battery_kwh, health, car, curves,
                         manifest = json.loads(body)
                         manifest["name"] += f" {APP_LABEL}"
                         manifest["short_name"] += f" {APP_LABEL}"
+                        for icon in manifest["icons"]:
+                            icon["src"] = icon["src"].replace(".png", "-test.png")
                         body = json.dumps(manifest, ensure_ascii=False).encode()
                     self.send(200, body, ctype)
                 else:
