@@ -60,6 +60,7 @@ services:
       DASHBOARD_PASSWORD_HASH: ${DASHBOARD_PASSWORD_HASH:-}
       DASHBOARD_TOTP_SECRET: ${DASHBOARD_TOTP_SECRET:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
+      # IP du reverse proxy, ou nom de service Docker (« caddy » pour le proxy du profil « proxy » ci-dessous)
       TRUSTED_PROXY: ${TRUSTED_PROXY:-}
       LOGIN_SCOPE: ${LOGIN_SCOPE:-proxy}
     volumes:
@@ -73,9 +74,35 @@ services:
     secrets:
       - google-sa
 
+  # Reverse proxy « clé en main » (HTTPS Let's Encrypt automatique), à la place d'un Synology ou autre.
+  # Facultatif : ne démarre qu'avec le profil « proxy » (docker compose --profile proxy up -d). Voir README.
+  caddy:
+    image: caddy:${CADDY_VERSION:-2.8.4-alpine}
+    container_name: e208-caddy
+    restart: unless-stopped
+    profiles: [proxy]
+    depends_on:
+      - e208-dashboard
+    environment:
+      DASHBOARD_DOMAIN: ${DASHBOARD_DOMAIN:-}
+    ports:
+      # Publics : c'est le point d'entrée depuis Internet (le dashboard, lui, reste lié au LAN)
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # certificats et clés Let's Encrypt : à garder (sinon nouvelle demande à chaque recréation)
+      - caddy-data:/data
+      - caddy-config:/config
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+
 secrets:
   google-sa:
     file: ./secrets/google-sa.json
 
 volumes:
   dashboard-data:
+  caddy-data:
+  caddy-config:

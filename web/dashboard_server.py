@@ -18,12 +18,14 @@ import getpass
 import hashlib
 import hmac
 import io
+import ipaddress
 import json
 import logging
 import os
 import re
 import secrets
 import shutil
+import socket
 import sqlite3
 import sys
 import tempfile
@@ -529,6 +531,11 @@ class PasswordGate:
 
     Désactivée si aucune empreinte n'est fournie. Sinon, la connexion est exigée pour les requêtes qui passent par
     le reverse proxy (TRUSTED_PROXY), ou pour toutes si LOGIN_SCOPE=all ou si le proxy n'est pas renseigné.
+    TRUSTED_PROXY est une IP (Synology…) ou un nom résolu par le DNS de Docker (« caddy », le proxy du profil
+    « proxy ») : un proxy qui change d'IP au redémarrage reste reconnu.
+    Une requête qui porte des en-têtes de reverse proxy (X-Forwarded-For, X-Real-IP…) sans venir de TRUSTED_PROXY
+    est aussi traitée comme venant d'Internet (mire exigée, en-têtes ignorés) : un proxy oublié dans TRUSTED_PROXY
+    n'ouvre pas le dashboard. Sans mire, ces requêtes sont refusées : jamais de dashboard public ouvert.
     La session est un cookie signé (HMAC) qui porte son expiration ; changer le mot de passe invalide les sessions.
     Avec une clé TOTP, un code d'application d'authentification est aussi demandé (tranche de 30 s en cours,
     précédente ou suivante ; un code déjà utilisé est refusé).
@@ -543,6 +550,7 @@ class PasswordGate:
         self.enabled = bool(password_hash)
         self.totp_secret, self.last_totp_step = totp_secret.replace(" ", "").upper(), 0
         self.trusted_proxy, self.scope = trusted_proxy, scope
+        self.proxy_ips, self.resolved_at = set(), -1e9
         self.failures, self.lock = {}, threading.Lock()
         if not self.enabled:
             return
@@ -555,7 +563,31 @@ class PasswordGate:
         self.fingerprint = hashlib.sha256(f"{password_hash}|{self.totp_secret}".encode()).hexdigest()[:16]
 
     def via_proxy(self, addr):
-        return bool(self.trusted_proxy) and addr == self.trusted_proxy
+        if not self.trusted_proxy:
+            return False
+        try:
+            return ipaddress.ip_address(addr) == ipaddress.ip_address(self.trusted_proxy)
+        except ValueError:
+            pass  # un nom (service Docker) plutôt qu'une IP
+        if addr not in self.proxy_ips or time.monotonic() - self.resolved_at > 60:
+            with self.lock:
+                if time.monotonic() - self.resolved_at > 5:  # au plus une résolution toutes les 5 s
+                    try:
+                        self.proxy_ips = set(socket.gethostbyname_ex(self.trusted_proxy)[2])
+                    except OSError:
+                        self.proxy_ips = set()  # proxy absent (profil non lancé) : aucune requête n'en vient
+                    self.resolved_at = time.monotonic()
+        return addr in self.proxy_ips
+
+    PROXY_HEADERS = ("X-Forwarded-For", "X-Real-IP", "X-Forwarded-Proto", "X-Forwarded-Host", "Forwarded")
+
+    def remote(self, addr, headers):
+        """Requête venue d'Internet : par le proxy de confiance, ou par un proxy non déclaré (en-têtes de proxy)."""
+        return self.via_proxy(addr) or any(headers.get(h) for h in self.PROXY_HEADERS)
+
+    def exposed_without_login(self, addr, headers):
+        """Requête venue d'Internet alors qu'aucun mot de passe n'est configuré."""
+        return not self.enabled and self.remote(addr, headers)
 
     def client_ip(self, addr, headers):
         return (headers.get("X-Real-IP") or addr).strip() if self.via_proxy(addr) else addr
@@ -564,8 +596,8 @@ class PasswordGate:
         """Requête arrivée en HTTP sur le proxy (X-Forwarded-Proto posé par le Synology) : à rediriger en HTTPS."""
         return self.via_proxy(addr) and (headers.get("X-Forwarded-Proto") or "").lower() == "http"
 
-    def required(self, addr):
-        return self.enabled and (self.scope == "all" or not self.trusted_proxy or self.via_proxy(addr))
+    def required(self, addr, headers):
+        return self.enabled and (self.scope == "all" or not self.trusted_proxy or self.remote(addr, headers))
 
     def check(self, password):
         n, r, p = self.params
@@ -674,11 +706,19 @@ def make_handler(mirror, season, fuel, history, offers, battery_kwh, health, car
         def renewed(self):
             """En-tête Set-Cookie prolongeant la session « se souvenir » (PWA : pas de reconnexion à chaque lancement)."""
             addr = self.client_address[0]
-            cookie = gate.renewal(self.headers.get("Cookie"), gate.via_proxy(addr)) if gate.required(addr) else None
+            if not gate.required(addr, self.headers):
+                return None
+            cookie = gate.renewal(self.headers.get("Cookie"), gate.via_proxy(addr))
             return {"Set-Cookie": cookie} if cookie else None
 
         def to_https(self):
-            """Arrivée en HTTP via le proxy : redirection permanente vers la même adresse en HTTPS."""
+            """Arrivée en HTTP via le proxy : redirection permanente vers la même adresse en HTTPS. Refus de toute
+            requête venue du proxy tant qu'aucun mot de passe n'est configuré (la réponse est alors envoyée ici)."""
+            if gate.exposed_without_login(self.client_address[0], self.headers):
+                log.warning("requête Internet refusée : mire non configurée (DASHBOARD_PASSWORD_HASH vide)")
+                self.send(403, "Accès distant désactivé : définir DASHBOARD_PASSWORD_HASH (voir README).".encode(),
+                          "text/plain; charset=utf-8")
+                return True
             host = (self.headers.get("Host") or "").split(":")[0]
             if not host or not gate.insecure(self.client_address[0], self.headers):
                 return False
@@ -689,7 +729,7 @@ def make_handler(mirror, season, fuel, history, offers, battery_kwh, health, car
             addr = self.client_address[0]
             if self.to_https():
                 return
-            if self.path.split("?")[0] != "/login" or not gate.required(addr):
+            if self.path.split("?")[0] != "/login" or not gate.required(addr, self.headers):
                 self.send(404, b"not found", "text/plain")
                 return
             ip = gate.client_ip(addr, self.headers)
@@ -716,7 +756,7 @@ def make_handler(mirror, season, fuel, history, offers, battery_kwh, health, car
             addr = self.client_address[0]
             if self.to_https():
                 return
-            authed = not gate.required(addr) or gate.valid(self.headers.get("Cookie"))
+            authed = not gate.required(addr, self.headers) or gate.valid(self.headers.get("Cookie"))
             if path == "/login":
                 if authed:
                     self.redirect("/")
@@ -764,7 +804,7 @@ def make_handler(mirror, season, fuel, history, offers, battery_kwh, health, car
                                 # prix du carburant le jour de chaque recharge (équivalent essence)
                                 fuel_history=history.get({str(r[1])[:10] for r in sheet["charges"]["rows"]})
                                 if offers["petrol_l_100km"] else {},
-                                auth=gate.required(addr))
+                                auth=gate.required(addr, self.headers))
                     self.send(200, json.dumps(data, ensure_ascii=False).encode(), "application/json; charset=utf-8",
                               self.renewed())
                 except Exception as exc:  # pylint: disable=broad-except

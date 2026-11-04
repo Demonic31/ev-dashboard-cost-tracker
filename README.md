@@ -132,15 +132,17 @@ Tout est servi par le conteneur (Chart.js et logo compris, dans `web/static/vend
 
 ### 🔐 Mire de connexion et accès distant
 
-Le dashboard peut demander un **mot de passe unique**, défini au niveau du conteneur, pour être publié sur Internet derrière le reverse proxy du Synology (qui gère le 443 et le certificat HTTPS).
+Le dashboard peut demander un **mot de passe unique**, défini au niveau du conteneur, pour être publié sur Internet derrière un reverse proxy qui gère le 443 et le certificat HTTPS : le **proxy intégré** (Caddy, voir plus bas), un Synology, ou tout autre.
 
 | Variable | Défaut | Rôle |
 | :--- | :--- | :--- |
 | `DASHBOARD_PASSWORD_HASH` | vide | Empreinte **scrypt** du mot de passe (le mot de passe en clair n'est stocké nulle part). Vide = pas de mire. La changer déconnecte toutes les sessions. |
 | `DASHBOARD_TOTP_SECRET` | vide | Clé TOTP : un code à 6 chiffres d'application d'authentification (Aegis, 2FAS, Google Authenticator…) est demandé après le mot de passe. Vide = mot de passe seul. La changer déconnecte toutes les sessions. |
 | `SESSION_SECRET` | vide | Clé de signature des sessions (`openssl rand -hex 32`) ; vide = clé aléatoire, sessions perdues à chaque redémarrage |
-| `TRUSTED_PROXY` | vide | IP LAN du Synology : seules ses requêtes sont considérées comme venant d'Internet, et leur en-tête `X-Real-IP` (IP réelle du visiteur) est cru |
-| `LOGIN_SCOPE` | `proxy` | `proxy` : mot de passe pour les accès via le Synology, accès LAN direct libre ; `all` : partout. Tant que `TRUSTED_PROXY` est vide, le mot de passe est demandé partout. |
+| `TRUSTED_PROXY` | vide | Reverse proxy : son IP LAN (Synology…), ou `caddy` avec le proxy intégré (nom résolu par Docker). Seul son en-tête `X-Real-IP` (IP réelle du visiteur) est cru. |
+| `LOGIN_SCOPE` | `proxy` | `proxy` : mot de passe pour les accès via le proxy, accès LAN direct libre ; `all` : partout. Tant que `TRUSTED_PROXY` est vide, le mot de passe est demandé partout. |
+
+Garde-fous : une requête qui porte des en-têtes de reverse proxy (`X-Forwarded-For`, `X-Real-IP`…) sans venir de `TRUSTED_PROXY` est traitée comme venant d'Internet (mot de passe exigé, en-têtes ignorés) ; et **sans mot de passe configuré, toute requête venant d'Internet est refusée** (403) : un proxy mal réglé n'ouvre jamais le dashboard.
 
 Générer l'empreinte (le mot de passe est demandé sans être affiché, 12 caractères minimum) :
 
@@ -159,7 +161,31 @@ L=$(docker compose run --rm -T e208-dashboard --setup-totp | grep '^DASHBOARD_TO
 * **Session** : cookie signé (HMAC), `HttpOnly`, `SameSite=Lax`, `Secure` derrière le Synology ; 12 h, ou 30 jours avec « Se souvenir de moi », prolongés de 30 jours à chaque utilisation après un jour (on ne se reconnecte que si le dashboard reste plus d'un mois sans être ouvert). Lien « Déconnexion » dans l'en-tête.
 * **Application Android (PWA)** : depuis Chrome sur l'adresse HTTPS publique, menu ⋮ → « Installer l'application » (l'adresse locale en HTTP ne peut pas être installée). En mode application, « Se souvenir de moi » est coché d'office. Le service worker ne garde en cache qu'une page « Hors connexion », jamais les données. Installer avec Chrome (Brave ne pose qu'un raccourci) ; si Chrome demande un nom ou si l'app garde une barre de titre, un VPN / bloqueur de pubs qui filtre le HTTPS a retiré le lien du manifeste : l'installer en le coupant, puis exclure l'adresse du filtrage.
 * **Anti-brute-force** (mot de passe ou code) : après 5 échecs en 15 min, l'IP du visiteur est bloquée 15 min ; comparaison en temps constant et 1 s d'attente par échec. Les tentatives sont journalisées (`docker logs`).
-* **Synology** (DSM → Portail de connexion → Avancé → Proxy inversé → Créer) : source HTTPS `<nom>` port 443 avec HSTS, destination HTTP `<LAN_IP>` port du dashboard ; onglet En-tête personnalisé : `X-Real-IP` = `$remote_addr` et `X-Forwarded-Proto` = `$scheme`. Certificat Let's Encrypt pour `<nom>` dans Sécurité → Certificat → Ajouter, puis **Paramètres** pour l'associer à la règle (sinon le Synology présente son certificat auto-signé). Facultatif : pour qu'une adresse tapée sans `https://` aboutisse, une seconde règle avec la source **HTTP** port 80 et la même destination ; le dashboard renvoie alors vers HTTPS (redirection 301), sans jamais servir la page en clair. À n'ajouter qu'après l'obtention du certificat, et à vérifier au premier renouvellement Let's Encrypt (qui passe aussi par le port 80). Sans elle, HSTS fait passer le navigateur en HTTPS dès la première visite.
+* **Synology**, si tu préfères son reverse proxy au proxy intégré (DSM → Portail de connexion → Avancé → Proxy inversé → Créer) : source HTTPS `<nom>` port 443 avec HSTS, destination HTTP `<LAN_IP>` port du dashboard ; onglet En-tête personnalisé : `X-Real-IP` = `$remote_addr` et `X-Forwarded-Proto` = `$scheme`. Certificat Let's Encrypt pour `<nom>` dans Sécurité → Certificat → Ajouter, puis **Paramètres** pour l'associer à la règle (sinon le Synology présente son certificat auto-signé). Facultatif : pour qu'une adresse tapée sans `https://` aboutisse, une seconde règle avec la source **HTTP** port 80 et la même destination ; le dashboard renvoie alors vers HTTPS (redirection 301), sans jamais servir la page en clair. À n'ajouter qu'après l'obtention du certificat, et à vérifier au premier renouvellement Let's Encrypt (qui passe aussi par le port 80). Sans elle, HSTS fait passer le navigateur en HTTPS dès la première visite.
+
+### 🌐 Accès depuis Internet avec le proxy intégré (Caddy)
+
+Solution clé en main, sans Synology : un conteneur [Caddy](https://caddyserver.com/) (profil compose `proxy`, facultatif) reçoit les connexions sur les ports 80 et 443, obtient et renouvelle seul le certificat **Let's Encrypt**, redirige HTTP vers HTTPS (avec HSTS) et transmet au dashboard l'IP réelle du visiteur. Seul le dashboard est publié : psacc (port 5000) reste sur le LAN.
+
+1. **Nom de domaine** : un enregistrement DNS `A` (et `AAAA` en IPv6) de ton domaine, p. ex. `ve.example.fr`, vers l'IP publique de ta box. IP publique qui change : un DNS dynamique (DynDNS, DuckDNS, celui de ta box…).
+2. **Box** : rediriger les ports **TCP 80 et 443** (et UDP 443, facultatif, pour HTTP/3) vers l'IP LAN du serveur. Jamais 5000 ni 8080. Le port 80 sert à Let's Encrypt (validation et renouvellement) et à la redirection vers HTTPS.
+3. **`.env`** : la mire (mot de passe, de préférence code TOTP, `SESSION_SECRET` : voir ci-dessus), puis :
+   ```bash
+   DASHBOARD_DOMAIN=ve.example.fr
+   TRUSTED_PROXY=caddy
+   ```
+4. **Démarrer** :
+   ```bash
+   docker compose --profile proxy up -d
+   docker logs -f e208-caddy   # attendre « certificate obtained successfully »
+   ```
+5. Ouvrir `https://ve.example.fr` : la mire de connexion s'affiche.
+
+* Certificats et clés dans les volumes `caddy-data` / `caddy-config` (à ne pas supprimer : Let's Encrypt limite le nombre de demandes).
+* Configuration dans [`proxy/Caddyfile`](proxy/Caddyfile) ; version de Caddy figée par `CADDY_VERSION` (défaut `2.8.4-alpine`).
+* Échec du certificat : vérifier le DNS (`nslookup ve.example.fr`), la redirection du port 80 depuis l'extérieur (pas depuis le LAN : beaucoup de box ne gèrent pas le « hairpin ») et les journaux de Caddy.
+* Couper l'accès depuis Internet : `docker compose stop caddy` (le dashboard reste accessible sur le LAN).
+* Sans mot de passe configuré, Caddy obtient le certificat mais le dashboard répond 403 aux requêtes venant d'Internet.
 
 ### 🧪 PREPROD
 
@@ -182,6 +208,8 @@ docker compose pull psacc && docker compose up -d psacc
 git pull
 docker compose build psacc-sheets-sync && docker compose up -d psacc-sheets-sync
 docker compose up -d --build e208-dashboard
+# proxy intégré (si utilisé) : changer CADDY_VERSION dans .env
+docker compose --profile proxy pull caddy && docker compose --profile proxy up -d caddy
 ```
 
 ## 💾 Sauvegarde
@@ -209,5 +237,5 @@ Les données déjà enregistrées sont conservées ; rien à faire côté synchr
 
 * `.env`, `secrets/` et `psacc/config/` (jetons Stellantis, VIN, positions GPS) sont exclus de git.
 * La clé Google est montée en *secret* Docker en lecture seule ; la synchro tourne en utilisateur non root et monte la config psacc en lecture seule.
-* Le front (port 8080) n'est publié que sur l'IP locale, comme psacc ; pour un accès depuis Internet, il passe par le reverse proxy du Synology et la mire de connexion.
+* Le front (port 8080) n'est publié que sur l'IP locale, comme psacc ; pour un accès depuis Internet, il passe par un reverse proxy (Caddy intégré ou Synology) et la mire de connexion. Sans mot de passe configuré, les requêtes venant d'Internet sont refusées.
 * Le port 5000 n'est publié que sur l'IP locale : ne pas l'exposer sur Internet (l'interface permet de piloter la voiture).

@@ -1,0 +1,16 @@
+# Reverse proxy « clé en main » du dashboard (profil compose « proxy ») : HTTPS automatique (Let's Encrypt),
+# redirection HTTP -> HTTPS, renouvellement du certificat. Seul le dashboard est publié : jamais psacc (port 5000).
+# Prérequis : DASHBOARD_DOMAIN pointe (DNS) sur l'IP publique, ports 80 et 443 redirigés par la box vers ce serveur.
+{$DASHBOARD_DOMAIN} {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy e208-dashboard:8080 {
+		# IP réelle du visiteur (anti-brute-force de la mire) et schéma d'origine ; remplacent ceux du client
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+	log {
+		output stdout
+		format console
+	}
+}
