@@ -18,7 +18,7 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "same-origin",
 }
-log = logging.getLogger("e208-pause")
+log = logging.getLogger("ev-pause")
 
 
 def pause_page(link):
@@ -32,7 +32,7 @@ def make_handler(link):
     page = pause_page(link)
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "e208-pause"
+        server_version = "ev-pause"
 
         def log_message(self, fmt, *args):
             log.debug("%s %s", self.address_string(), fmt % args)

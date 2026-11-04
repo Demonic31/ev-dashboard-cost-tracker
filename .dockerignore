@@ -1,0 +1,5 @@
+# Contexte de build de l'image du dashboard (racine du dépôt) : liste blanche de ce qu'elle embarque.
+# Tout le reste en est exclu, en particulier .env, secrets/, psacc/ (jetons, positions GPS) et local/.
+*
+!web/
+!brands/*/source.py
