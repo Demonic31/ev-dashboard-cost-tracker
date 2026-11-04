@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Front web en lecture seule du Google Sheet de suivi e-208 / Tempo.
+"""Front web en lecture seule du Google Sheet de suivi d'un véhicule électrique / Tempo.
 
 Sert une page HTML et un endpoint /api/data qui renvoie, en JSON, les valeurs calculées par le Sheet
 (onglets Dashboard, Recharges, Trajets, Couleurs Tempo). Aucune donnée n'est recalculée ici : la page est un
@@ -22,13 +22,9 @@ import ipaddress
 import json
 import logging
 import os
-import re
 import secrets
-import shutil
 import socket
-import sqlite3
 import sys
-import tempfile
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -41,6 +37,11 @@ from urllib.parse import parse_qs, quote
 import requests
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import service_account
+
+# -I (isolé) retire le dossier du script de sys.path : modules du dashboard et sources de marque (brands/)
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, APP_DIR)
+from vehicle_source import cached, load_source  # noqa: E402  pylint: disable=wrong-import-position
 
 SHEET_EPOCH = datetime(1899, 12, 30)
 COLORS = {1: "BLEU", 2: "BLANC", 3: "ROUGE"}
@@ -82,7 +83,7 @@ RANGES = {
     "settings": ("'Paramètres'!B10:B12", ()),
 }
 
-log = logging.getLogger("e208-dashboard")
+log = logging.getLogger("ev-dashboard")
 
 
 def serial_to_iso(value):
@@ -90,22 +91,6 @@ def serial_to_iso(value):
         dt = SHEET_EPOCH + timedelta(days=float(value))
         return dt.strftime("%Y-%m-%dT%H:%M:%S")
     return value
-
-
-def cached(seconds):
-    """Mémoïse le résultat d'une méthode sans argument pendant `seconds` (force=True pour relire)."""
-    def deco(fn):
-        state = {"at": 0.0, "value": None, "lock": threading.Lock()}
-
-        def wrapper(self, force=False):
-            with state["lock"]:
-                if force or state["value"] is None or time.monotonic() - state["at"] > seconds:
-                    state["value"], state["at"] = fn(self), time.monotonic()
-                    if isinstance(state["value"], dict) and "error" in state["value"]:
-                        state["at"] -= seconds - 60  # erreur : nouvel essai dans une minute
-                return state["value"]
-        return wrapper
-    return deco
 
 
 class SheetMirror:
@@ -210,42 +195,6 @@ FUEL_ARCHIVE = "https://donnees.roulez-eco.fr/opendata/jour/{:%Y%m%d}"
 FUEL_NAMES = {"sp98": "SP98", "sp95": "SP95", "e10": "E10", "e85": "E85", "gazole": "Gazole", "gplc": "GPLc"}
 
 
-class Psacc:
-    """Lecture seule de l'API web de psacc (réseau Docker interne), sans appel aux serveurs Stellantis."""
-
-    def __init__(self, url, vin):
-        self.url, self._vin = url.rstrip("/"), vin
-
-    def vin(self):
-        if not self._vin:
-            cars = requests.get(f"{self.url}/get_vehicles", timeout=10).json()
-            self._vin = next(c["vin"] for c in cars if (c.get("battery_power") or 0) > 0)
-        return self._vin
-
-    def get(self, path):
-        return requests.get(f"{self.url}{path}", timeout=15).json()
-
-
-class VehicleName:
-    """« Marque Modèle » affiché en titre : VEHICLE_NAME s'il est défini, sinon lu sur psacc (ex. « Peugeot e-208 »)."""
-
-    def __init__(self, psacc, forced):
-        self.psacc, self.forced = psacc, forced
-
-    @cached(3600)
-    def get(self):
-        if self.forced:
-            return {"name": self.forced}
-        try:
-            vin = self.psacc.vin()
-            car = next(c for c in self.psacc.get("/get_vehicles") if c.get("vin") == vin)
-            name = " ".join(str(car.get(k) or "").strip() for k in ("brand", "label")).strip()
-            return {"name": name} if name else {"error": "marque et modèle inconnus de psacc"}
-        except (requests.RequestException, ValueError, StopIteration) as exc:
-            log.warning("marque et modèle indisponibles : %s", exc)
-            return {"error": str(exc) or type(exc).__name__}
-
-
 class CustomLogo:
     """Logo personnel (DASHBOARD_LOGO : nom d'un fichier .svg ou .png de local/), affiché à la place de l'icône
     de l'app dans l'en-tête. Relu à chaque requête : le remplacer ne demande pas de redémarrage."""
@@ -270,138 +219,17 @@ class CustomLogo:
             return f.read(), ctype
 
 
-class BatteryHealth:
-    """SOH de la batterie relevé par psacc (champ « resistance » de l'API Stellantis)."""
-
-    def __init__(self, psacc):
-        self.psacc = psacc
-
-    @cached(3600)
-    def get(self):
-        try:
-            soh = self.psacc.get(f"/battery/soh/{self.psacc.vin()}").get("soh")
-            if soh is None:
-                return {"error": "aucun SOH relevé par psacc"}
-            return {"soh": soh, "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds")}
-        except (requests.RequestException, ValueError, StopIteration) as exc:
-            log.warning("SOH indisponible : %s", exc)
-            return {"error": str(exc) or type(exc).__name__}
-
-
-class CarStatus:
-    """Dernier état connu de la voiture (niveau, autonomie, charge, compteur), lu dans le cache de psacc
-    (from_cache=1 : la voiture n'est pas réveillée, les valeurs datent de son dernier envoi)."""
-
-    def __init__(self, psacc):
-        self.psacc = psacc
-
-    @cached(300)
-    def get(self):
-        try:
-            info = self.psacc.get(f"/get_vehicleinfo/{self.psacc.vin()}?from_cache=1")
-            elec = next(e for e in info.get("energy") or [] if e.get("type") == "Electric")
-            charging = elec.get("charging") or {}
-            odo = info.get("timed_odometer") or {}
-            return {"level": elec.get("level"), "autonomy": elec.get("autonomy"), "updated_at": elec.get("updated_at"),
-                    "status": charging.get("status"), "plugged": charging.get("plugged"),
-                    "charging_rate": charging.get("charging_rate"), "remaining_time": charging.get("remaining_time"),
-                    "mileage": odo.get("mileage"), "mileage_at": odo.get("updated_at")}
-        except (requests.RequestException, ValueError, StopIteration) as exc:
-            log.warning("état de la voiture indisponible : %s", exc)
-            return {"error": str(exc) or type(exc).__name__}
-
-
-class ChargeCurves:
-    """Points de la courbe de charge relevés par psacc (table battery_curve), par ID de recharge du Sheet.
-    La base est copiée (avec son WAL) avant lecture : celle de psacc n'est jamais verrouillée ni modifiée."""
-
-    def __init__(self, psacc, config_dir):
-        self.psacc, self.config_dir = psacc, config_dir
-
-    @staticmethod
-    def iso(ts):
-        return datetime.fromisoformat(ts).astimezone(timezone.utc).isoformat(timespec="seconds")
-
-    @cached(300)
-    def get(self):
-        try:
-            vin = self.psacc.vin()
-            with tempfile.TemporaryDirectory() as tmp:
-                for name in ("info.db", "info.db-wal"):
-                    if os.path.exists(os.path.join(self.config_dir, name)):
-                        shutil.copyfile(os.path.join(self.config_dir, name), os.path.join(tmp, name))
-                conn = sqlite3.connect(os.path.join(tmp, "info.db"))
-                try:
-                    charges = conn.execute("SELECT start_at, stop_at, start_level, end_level FROM battery "
-                                           "WHERE VIN=? AND stop_at IS NOT NULL", (vin,)).fetchall()
-                    curves = {}
-                    for start, stop, start_level, end_level in charges:
-                        points = [[self.iso(d), lvl, aut] for d, lvl, aut in conn.execute(
-                            "SELECT date, level, autonomy FROM battery_curve WHERE VIN=? AND start_at=? ORDER BY date",
-                            (vin, start)).fetchall()]
-                        # début et fin de la table battery : bornes réelles de la charge
-                        if start_level is not None and (not points or points[0][0] > self.iso(start)):
-                            points.insert(0, [self.iso(start), start_level, None])
-                        if end_level is not None and (not points or points[-1][0] < self.iso(stop)):
-                            points.append([self.iso(stop), end_level, None])
-                        sid = "C-" + datetime.fromisoformat(start).astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-                        curves[sid] = points
-                    ongoing = self.ongoing(conn, vin)
-                finally:
-                    conn.close()
-            rate, count = self.median_rate(charges)
-            return {"curves": curves, "ongoing": ongoing, "median_rate": rate, "median_count": count}
-        except (OSError, sqlite3.Error, requests.RequestException, ValueError, StopIteration) as exc:
-            log.warning("courbes de charge indisponibles : %s", exc)
-            return {"error": str(exc) or type(exc).__name__}
-
-
-    def ongoing(self, conn, vin):
-        """Points de la charge en cours (ligne de battery sans stop_at), début de charge compris."""
-        row = conn.execute("SELECT start_at, start_level FROM battery WHERE VIN=? AND stop_at IS NULL "
-                           "ORDER BY start_at DESC LIMIT 1", (vin,)).fetchone()
-        if not row:
-            return None
-        start, start_level = row
-        points = [[self.iso(d), lvl] for d, lvl in conn.execute(
-            "SELECT date, level FROM battery_curve WHERE VIN=? AND start_at=? ORDER BY date", (vin, start)).fetchall()
-            if lvl is not None]
-        if start_level is not None and (not points or points[0][0] > self.iso(start)):
-            points.insert(0, [self.iso(start), start_level])
-        return {"start_at": self.iso(start), "points": points}
-
-    @staticmethod
-    def median_rate(charges, count=10):
-        """Vitesse de charge médiane (% par heure) des dernières recharges terminées d'au moins 30 min, et le nombre
-        de recharges retenues."""
-        rates = []
-        for start, stop, start_level, end_level in sorted(charges)[-count:]:
-            hours = (datetime.fromisoformat(stop) - datetime.fromisoformat(start)).total_seconds() / 3600
-            if start_level is not None and end_level is not None and hours >= 0.5 and end_level > start_level:
-                rates.append((end_level - start_level) / hours)
-        rates.sort()
-        return (rates[len(rates) // 2] if rates else None), len(rates)
-
-
-def iso_hours(duration):
-    """Durée ISO 8601 de l'API Stellantis (« PT2H25M ») en heures, None si absente ou illisible."""
-    m = re.fullmatch(r"P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?", duration or "")
-    if not m or not any(m.groups()):
-        return None
-    d, h, mi, sec = (float(g or 0) for g in m.groups())
-    return 24 * d + h + mi / 60 + sec / 3600
-
-
 def charge_estimate(car, curves):
     """Base de l'estimation d'une charge en cours, extrapolée dans la page (la voiture n'envoie son état qu'au
     début, vers +45 min, à la fin et aux réveils) : dernier relevé et vitesse de charge en % par heure.
 
     Vitesse : mesurée dans la charge en cours (deux relevés à 1 h d'écart au moins), sinon médiane des dernières
     recharges, sinon déduite du temps restant annoncé par la voiture (souvent optimiste)."""
-    if car.get("error") or car.get("status") != "InProgress" or car.get("level") is None or not car.get("updated_at"):
+    if not car or car.get("error") or car.get("status") != "charging" or car.get("level") is None \
+            or not car.get("updated_at"):
         return None
     at, level = datetime.fromisoformat(car["updated_at"]), float(car["level"])
-    car_hours = iso_hours(car.get("remaining_time"))
+    car_hours = car.get("remaining_hours")
     rate, source = None, None
     points = ((curves or {}).get("ongoing") or {}).get("points") or []
     if len(points) >= 2:
@@ -589,7 +417,8 @@ class PasswordGate:
     précédente ou suivante ; un code déjà utilisé est refusé).
     Après MAX_FAILURES échecs en BLOCK_SECONDS, l'IP du visiteur (X-Real-IP posé par le proxy) est bloquée."""
 
-    COOKIE = "e208_session"
+    COOKIE = "ev_session"
+    LEGACY_COOKIE = "e208_session"  # nom avant 0.9.0 : encore accepté, remplacé à la requête suivante
     MAX_FAILURES, BLOCK_SECONDS = 5, 15 * 60
     SESSION_SECONDS, REMEMBER_SECONDS = 12 * 3600, 30 * 86400
     RENEW_AFTER = 86400  # une session « se souvenir » utilisée après 1 jour repart pour 30 jours
@@ -682,36 +511,55 @@ class PasswordGate:
     def sign(self, expiry):
         return hmac.new(self.secret, f"{expiry}|{self.fingerprint}".encode(), hashlib.sha256).hexdigest()
 
-    def cookie(self, remember, secure):
-        expiry = int(time.time()) + (self.REMEMBER_SECONDS if remember else self.SESSION_SECONDS)
+    def cookie(self, remember, secure, expiry=None):
+        """Cookie de session ; `expiry` imposé pour reprendre une session existante (changement de nom)."""
+        now = int(time.time())
+        expiry = expiry or now + (self.REMEMBER_SECONDS if remember else self.SESSION_SECONDS)
         attrs = ["Path=/", "HttpOnly", "SameSite=Lax"] + (["Secure"] if secure else []) + \
-            ([f"Max-Age={self.REMEMBER_SECONDS}"] if remember else [])
+            ([f"Max-Age={expiry - now}"] if remember else [])
         return "; ".join([f"{self.COOKIE}={expiry}.{self.sign(expiry)}"] + attrs)
 
+    @staticmethod
+    def removal(name, secure):
+        return "; ".join([f"{name}=", "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"] + (["Secure"] if secure else []))
+
     def clear_cookie(self, secure):
-        return "; ".join([f"{self.COOKIE}=", "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"] +
-                         (["Secure"] if secure else []))
+        """En-têtes Set-Cookie de déconnexion : cookie actuel et ancien nom."""
+        return [self.removal(self.COOKIE, secure), self.removal(self.LEGACY_COOKIE, secure)]
+
+    def session(self, cookie_header):
+        """(nom du cookie, échéance) de la session valide, ou (None, 0) si absente, expirée ou mal signée."""
+        try:
+            jar = SimpleCookie(cookie_header or "")
+        except CookieError:
+            return None, 0
+        for name in (self.COOKIE, self.LEGACY_COOKIE):
+            morsel = jar.get(name)
+            expiry, _, sig = (morsel.value if morsel else "").partition(".")
+            if expiry.isdigit() and int(expiry) > time.time() and hmac.compare_digest(sig, self.sign(int(expiry))):
+                return name, int(expiry)
+        return None, 0
 
     def expiry(self, cookie_header):
         """Échéance de la session portée par le cookie, ou 0 si absente, expirée ou mal signée."""
-        try:
-            morsel = SimpleCookie(cookie_header or "").get(self.COOKIE)
-        except CookieError:
-            return 0
-        expiry, _, sig = (morsel.value if morsel else "").partition(".")
-        ok = expiry.isdigit() and int(expiry) > time.time() and hmac.compare_digest(sig, self.sign(int(expiry)))
-        return int(expiry) if ok else 0
+        return self.session(cookie_header)[1]
 
     def valid(self, cookie_header):
         return bool(self.expiry(cookie_header))
 
     def renewal(self, cookie_header, secure):
-        """Cookie neuf de 30 jours pour une session « se souvenir » entamée depuis plus de RENEW_AFTER
-        (les sessions courtes de 12 h ne sont jamais prolongées) ; None s'il n'y a rien à renouveler."""
-        left = self.expiry(cookie_header) - time.time()
+        """En-têtes Set-Cookie à renvoyer, ou None : cookie neuf de 30 jours pour une session « se souvenir » entamée
+        depuis plus de RENEW_AFTER (les sessions courtes de 12 h ne sont jamais prolongées), et passage d'une
+        session sous l'ancien nom de cookie au nouveau, sans reconnexion."""
+        name, expiry = self.session(cookie_header)
+        left = expiry - time.time()
         if self.SESSION_SECONDS < left < self.REMEMBER_SECONDS - self.RENEW_AFTER:
-            return self.cookie(True, secure)
-        return None
+            cookies = [self.cookie(True, secure)]
+        elif name == self.LEGACY_COOKIE:
+            cookies = [self.cookie(left > self.SESSION_SECONDS, secure, expiry)]
+        else:
+            return None
+        return cookies + ([self.removal(self.LEGACY_COOKIE, secure)] if name == self.LEGACY_COOKIE else [])
 
 
 TOTP_FIELD = """<label>Code de l'application d'authentification
@@ -742,9 +590,9 @@ def index_page(logo):
     return html.encode()
 
 
-def make_handler(mirror, season, fuel, history, offers, battery_kwh, health, car, curves, gate, vehicle, logo):
+def make_handler(mirror, season, fuel, history, offers, battery_kwh, source, vehicle_name, gate, logo):
     class Handler(BaseHTTPRequestHandler):
-        server_version = "e208-dashboard"
+        server_version = "ev-dashboard"
 
         def log_message(self, fmt, *args):
             log.debug("%s %s", self.address_string(), fmt % args)
@@ -755,7 +603,8 @@ def make_handler(mirror, season, fuel, history, offers, battery_kwh, health, car
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             for k, v in {**SECURITY_HEADERS, **(headers or {})}.items():
-                self.send_header(k, v)
+                for value in v if isinstance(v, list) else [v]:  # plusieurs Set-Cookie
+                    self.send_header(k, value)
             self.end_headers()
             self.wfile.write(body)
 
@@ -860,10 +709,10 @@ def make_handler(mirror, season, fuel, history, offers, battery_kwh, health, car
                 try:
                     force = "refresh=1" in self.path
                     sheet = mirror.get(force=force)
-                    car_state, charge_curves = car.get(force=force), curves.get(force=force)
+                    car_state, charge_curves = source.car(force=force), source.curves(force=force)
                     data = dict(sheet, season=season.get(force=force), battery_kwh=battery_kwh,
-                                vehicle=vehicle.get(force=force),
-                                health=health.get(force=force), car=car_state, charge_curves=charge_curves,
+                                vehicle={"name": vehicle_name} if vehicle_name else source.name(force=force),
+                                health=source.health(force=force), car=car_state, charge_curves=charge_curves,
                                 charge_estimate=charge_estimate(car_state, charge_curves),
                                 offers=dict(offers, fuel=fuel.get() if offers["petrol_l_100km"] else None),
                                 # prix du carburant le jour de chaque recharge (équivalent essence)
@@ -898,7 +747,7 @@ def setup_totp():
     à mettre dans .env (sur stdout, seule : elle peut être capturée par la commande appelante)."""
     import segno  # pylint: disable=import-outside-toplevel  (utile seulement ici)
     secret = base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
-    label = "Dashboard e-208"
+    label = "Dashboard VE"
     uri = f"otpauth://totp/{quote(label)}?secret={secret}&issuer={quote(label)}&digits=6&period=30&algorithm=SHA1"
     err = sys.stderr
     err.write("\nScanne ce QR code avec l'application d'authentification :\n")
@@ -934,10 +783,8 @@ def main():
     history = FuelHistory(os.environ.get("PETROL_FUEL", "sp98"), os.environ.get("PETROL_DEPARTEMENT", "").strip(),
                           os.environ.get("DATA_DIR", "").strip())
     offers = offers_config()
-    psacc = Psacc(os.environ.get("PSACC_URL", "http://psacc:5000"), os.environ.get("VIN") or None)
-    health, car = BatteryHealth(psacc), CarStatus(psacc)
-    curves = ChargeCurves(psacc, os.environ.get("PSACC_CONFIG", "/config"))
-    vehicle = VehicleName(psacc, os.environ.get("VEHICLE_NAME", "").strip())
+    # Source de données de la marque (brands/<BRAND>/source.py)
+    source = load_source(os.environ.get("BRAND") or "stellantis", os.path.join(APP_DIR, "brands"), os.environ)
     logo = CustomLogo(os.environ.get("DASHBOARD_LOGO"), os.environ.get("DASHBOARD_LOGO_INVERT", "") in ("1", "true", "oui"))
     gate = PasswordGate(os.environ.get("DASHBOARD_PASSWORD_HASH", "").strip(), os.environ.get("SESSION_SECRET", "").strip(),
                         os.environ.get("TRUSTED_PROXY", "").strip(), os.environ.get("LOGIN_SCOPE", "proxy").strip(),
@@ -947,9 +794,10 @@ def main():
             else f"requêtes venant du proxy {gate.trusted_proxy}"
         log.info("mire de connexion active%s (%s)", " avec code TOTP" if gate.totp_secret else "", scope)
     port = int(os.environ.get("PORT", "8080"))
-    log.info("front e-208 sur le port %d (comparatif : %s)", port, json.dumps(offers))
-    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, history, offers, env_price("BATTERY_KWH"), health, car, curves, gate,
-                                                         vehicle, logo)).serve_forever()
+    log.info("dashboard VE sur le port %d (comparatif : %s)", port, json.dumps(offers))
+    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, history, offers, env_price("BATTERY_KWH"), source,
+                                                         os.environ.get("VEHICLE_NAME", "").strip(), gate,
+                                                         logo)).serve_forever()
 
 
 if __name__ == "__main__":

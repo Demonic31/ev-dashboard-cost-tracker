@@ -78,17 +78,17 @@ function renderPeriod() {
 // ------------------------------------------------------------------ KPI + comparaison Base
 function renderHealth() {
   const el = document.getElementById("soh"), h = data.health || {};
-  el.hidden = false;
+  el.hidden = data.health === null;  // donnée que la source de la marque ne fournit pas
+  if (el.hidden) return;
   if (h.soh == null) { el.innerHTML = `<span class="label">🔋 Santé batterie (SOH)</span><small>indisponible : ${esc(h.error || "pas de relevé")}</small>`; return; }
   el.innerHTML = `<span class="label">🔋 Santé batterie (SOH)</span><span class="n">${fr(h.soh, 0)} %</span>
     <div class="gauge"><span style="width:${Math.min(100, h.soh)}%;background:var(--accent)"></span></div>
-    <small>indicateur Stellantis (résistance interne) relevé par psacc${data.battery_kwh ? ` · batterie ${fr(data.battery_kwh, 0)} kWh neuve` : ""}</small>`;
+    <small>${[h.note && esc(h.note), data.battery_kwh && `batterie ${fr(data.battery_kwh, 0)} kWh neuve`].filter(Boolean).join(" · ")}</small>`;
 }
 
-// Statuts de charge de l'API Stellantis -> libellé et couleur
-const CHARGE_STATES = { InProgress: ["En charge", "--good"], Finished: ["Terminée", "--bleu"], Stopped: ["Arrêtée", "--petrol"],
-                        Failure: ["Échec", "--bad"], Disconnected: ["Débranchée", "--muted"] };
-const isoDuration = d => { const m = /PT(?:(\d+)H)?(?:(\d+)M)?/.exec(d || ""); return m && (m[1] || m[2]) ? `${+m[1] || 0} h ${String(+m[2] || 0).padStart(2, "0")}` : ""; };
+// États de charge (vocabulaire commun à toutes les marques, voir web/vehicle_source.py) -> libellé et couleur
+const CHARGE_STATES = { charging: ["En charge", "--good"], finished: ["Terminée", "--bleu"], stopped: ["Arrêtée", "--petrol"],
+                        failure: ["Échec", "--bad"], disconnected: ["Débranchée", "--muted"] };
 
 // Charge en cours : la voiture n'envoie son état qu'au début, vers +45 min, à la fin et aux réveils. Entre deux, on
 // extrapole depuis le dernier relevé à la vitesse fournie par le serveur (data.charge_estimate), recalculé chaque minute.
@@ -106,7 +106,7 @@ function chargeEstimate() {
 const hm = d => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 const hDuration = h => `${Math.floor(h)} h ${String(Math.round(h % 1 * 60) % 60).padStart(2, "0")}`;
 
-// « Marque Modèle » du véhicule (psacc ou VEHICLE_NAME) ; « Dashboard VE » tant qu'il est inconnu
+// « Marque Modèle » du véhicule (source de la marque ou VEHICLE_NAME) ; « Dashboard VE » tant qu'il est inconnu
 function renderTitle() {
   const name = data.vehicle?.name;
   if (!name) return;
@@ -116,13 +116,14 @@ function renderTitle() {
 
 function renderCar() {
   const el = document.getElementById("car"), c = data.car || {};
-  el.hidden = false;
+  el.hidden = data.car === null;  // donnée que la source de la marque ne fournit pas
+  if (el.hidden) return;
   if (c.error || c.level == null) {
     document.getElementById("carAt").textContent = "";
-    document.getElementById("carItems").innerHTML = `<div class="empty">État indisponible : ${esc(c.error || "pas de relevé psacc")}</div>`;
+    document.getElementById("carItems").innerHTML = `<div class="empty">État indisponible : ${esc(c.error || "pas de relevé")}</div>`;
     return;
   }
-  const est = c.status === "InProgress" ? chargeEstimate() : null;
+  const est = c.status === "charging" ? chargeEstimate() : null;
   const real = Math.max(0, Math.min(100, num(c.level))), lvl = est ? est.level : real;
   const at = c.updated_at ? new Date(c.updated_at.replace(" ", "T")) : null;
   const atText = d => d.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
@@ -131,8 +132,8 @@ function renderCar() {
   let extra = "";
   if (est) extra = est.done ? `fin estimée vers ${hm(est.end)}`
     : `fin dans ≈ ${hDuration(est.hoursLeft)} (vers ${hm(est.end)})` + (est.car_end_at ? `\nla voiture annonçait ${hm(new Date(est.car_end_at))}` : "");
-  else if (c.status === "InProgress") extra = [c.charging_rate ? `${fr(c.charging_rate, 0)} km/h` : "",
-    isoDuration(c.remaining_time) && `fin dans ${isoDuration(c.remaining_time)}`].filter(Boolean).join(" · ");
+  else if (c.status === "charging") extra = [c.charging_rate ? `${fr(c.charging_rate, 0)} km/h` : "",
+    c.remaining_hours ? `fin dans ${hDuration(c.remaining_hours)}` : ""].filter(Boolean).join(" · ");
   const approx = est ? "≈ " : "";
   document.getElementById("carItems").innerHTML = `
     <div><div class="label">Niveau</div><div class="n" style="color:hsl(${1.2 * lvl} 70% var(--lvl-l))">${approx}${fr(lvl, 0)} %</div>
@@ -302,7 +303,7 @@ function renderSeason() {
 }
 
 // ------------------------------------------------------------------ courbes de charge
-// Points relevés par psacc ; sans courbe (recharge saisie à la main), droite début → fin tirée du Sheet
+// Points relevés par la source de la marque ; sans courbe (recharge saisie à la main), droite début → fin tirée du Sheet
 function curvePoints(r) {
   const pts = data.charge_curves?.curves?.[r[0]];
   if (pts?.length >= 2) return { real: true, pts: pts.map(([d, level, autonomy]) => ({ x: +new Date(d), y: level, autonomy })) };
@@ -372,8 +373,8 @@ function drawCurve(key, canvas, hint, r, { real, pts }) {
     plugins: [hcBands],
   });
   const h = num(r[C.duration]), avg = h ? num(r[C.kwhBat]) / h : 0;
-  hint.textContent = (real ? `${pts.length} points relevés par psacc ; entre deux points la courbe est interpolée (pointillés).`
-    : "Recharge sans relevé psacc : droite estimée entre le début et la fin.")
+  hint.textContent = (real ? `${pts.length} points relevés ; entre deux points la courbe est interpolée (pointillés).`
+    : "Recharge sans relevé : droite estimée entre le début et la fin.")
     + (avg ? ` Puissance moyenne ≈ ${fr(avg, 2)} kW.` : "") + ` Fond bleu : heures creuses ${hcS}h–${hcE}h.`;
 }
 
@@ -501,15 +502,15 @@ async function load(force = false) {
 }
 
 const preset = document.getElementById("preset");
-preset.value = store.get("e208.preset") || "month";  // par défaut : mois en cours
-document.getElementById("from").value = store.get("e208.from") || "";
-document.getElementById("to").value = store.get("e208.to") || "";
+preset.value = (store.get("ev.preset") ?? store.get("e208.preset")) || "month";  // par défaut : mois en cours
+document.getElementById("from").value = (store.get("ev.from") ?? store.get("e208.from")) || "";
+document.getElementById("to").value = (store.get("ev.to") ?? store.get("e208.to")) || "";
 document.getElementById("customDates").hidden = preset.value !== "custom";
 function onPeriod() {
   document.getElementById("customDates").hidden = preset.value !== "custom";
-  store.set("e208.preset", preset.value);
-  store.set("e208.from", document.getElementById("from").value);
-  store.set("e208.to", document.getElementById("to").value);
+  store.set("ev.preset", preset.value);
+  store.set("ev.from", document.getElementById("from").value);
+  store.set("ev.to", document.getElementById("to").value);
   if (data) render();
 }
 [preset, document.getElementById("from"), document.getElementById("to")].forEach(e => e.addEventListener("change", onPeriod));

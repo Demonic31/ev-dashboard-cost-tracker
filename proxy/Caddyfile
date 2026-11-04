@@ -4,7 +4,7 @@
 {$DASHBOARD_DOMAIN} {
 	encode zstd gzip
 	header Strict-Transport-Security "max-age=31536000"
-	reverse_proxy e208-dashboard:8080 {
+	reverse_proxy ev-dashboard:8080 {
 		# IP réelle du visiteur (anti-brute-force de la mire) et schéma d'origine ; remplacent ceux du client
 		header_up X-Real-IP {remote_host}
 		header_up X-Forwarded-Proto {scheme}

@@ -1,12 +1,22 @@
-# ev-dashboard-cost-tracker : suivi des recharges d'une e-208 et coût EDF Tempo
+# ev-dashboard-cost-tracker : suivi des recharges d'un véhicule électrique et coût EDF Tempo
 
-Enregistre automatiquement chaque recharge et chaque trajet d'une **Peugeot e-208** avec [psa_car_controller](https://github.com/flobz/psa_car_controller) (psacc), puis les pousse toutes les heures dans un **Google Sheet** qui calcule le coût réel en **EDF Tempo** et le coût aux 100 km.
+Enregistre automatiquement chaque recharge et chaque trajet d'un **véhicule électrique**, puis les pousse toutes les heures dans un **Google Sheet** qui calcule le coût réel en **EDF Tempo** et le coût aux 100 km. Un **dashboard web** en affiche le détail.
 
 | Service | Rôle |
 | :--- | :--- |
-| `psacc` | Image officielle `flobz/psa_car_controller` : connexion au compte MyPeugeot, enregistrement des positions, charges et courbes de charge dans `psacc/config/info.db` (option `-r`), tableau de bord web sur le port 5000 (réseau local uniquement). |
-| `psacc-sheets-sync` | Petit service Python ([`sync/psacc_sheets_sync.py`](sync/psacc_sheets_sync.py)) qui lit une copie de la base psacc, récupère les couleurs Tempo et met à jour le Sheet toutes les heures. |
-| `e208-dashboard` | Front web en lecture seule ([`web/`](web/)) sur le port 8080 (réseau local uniquement) : copie fidèle des valeurs du Sheet, filtres par période, saison Tempo, comparatif des offres. |
+| Services de la marque | Relevé des charges et trajets, et synchro du Sheet : [`brands/<marque>/`](brands/), choisi par `BRAND`. |
+| `ev-dashboard` | Front web en lecture seule ([`web/`](web/)) sur le port 8080 (réseau local uniquement) : copie fidèle des valeurs du Sheet, état de la voiture, filtres par période, saison Tempo, comparatif des offres. |
+
+## 🚗 Marques prises en charge
+
+| `BRAND` | Marques | Outil | Détails |
+| :--- | :--- | :--- | :--- |
+| `stellantis` (défaut) | Peugeot, Citroën, DS, Opel, Vauxhall | [psa_car_controller](https://github.com/flobz/psa_car_controller) (psacc) | [`brands/stellantis/`](brands/stellantis/README.md) |
+
+Testé avec une Peugeot e-208. **Ajouter une marque** : créer `brands/<marque>/` avec
+* `docker-compose.yml` : ses services (relevé, synchro qui écrit le Sheet au format commun), inclus par le compose racine ; les chemins relatifs partent de ce dossier ;
+* `source.py` : `create(env)` renvoie une `VehicleSource` (contrat dans [`web/vehicle_source.py`](web/vehicle_source.py) : nom, état de la voiture, SOH, courbes de charge ; une donnée non fournie est masquée) ;
+* `README.md` : prérequis, installation, variables.
 
 ## 📸 Aperçu
 
@@ -22,7 +32,7 @@ Captures du front web avec des **données fictives**.
 ## 📋 Prérequis
 
 * Docker et le plugin `docker compose` ; l'utilisateur dans le groupe `docker` (`sudo usermod -aG docker $USER`, puis se reconnecter).
-* Un compte **MyPeugeot** sur lequel l'e-208 est rattachée (le code PIN de l'application et un téléphone pour l'OTP par SMS).
+* Un véhicule d'une [marque prise en charge](#-marques-prises-en-charge) et ses prérequis (Stellantis : compte MyPeugeot…, voir [son README](brands/stellantis/README.md#-prérequis)).
 * Un **Google Sheet** au format attendu (onglets `Dashboard`, `Recharges`, `Trajets`, `Couleurs Tempo`, `Paramètres`), créé à partir du [modèle fourni](#-google-sheet-à-partir-du-modèle), et un **compte de service Google Cloud** (gratuit, sans facturation).
 
 ## 📊 Google Sheet à partir du modèle
@@ -43,10 +53,10 @@ Le modèle [`sheet/modele-suivi-recharges.xlsx`](sheet/modele-suivi-recharges.xl
 Dans **Cloud Shell** (icône `>_` de https://console.cloud.google.com) :
 
 ```bash
-export PROJECT=e208-cost-tracker-$(date +%s | tail -c 6) SA=psacc-sheets-sync
-gcloud projects create $PROJECT --name="e208 cost tracker" && gcloud config set project $PROJECT
+export PROJECT=ev-dashboard-$(date +%s | tail -c 6) SA=ev-sheets-sync
+gcloud projects create $PROJECT --name="EV dashboard" && gcloud config set project $PROJECT
 gcloud services enable sheets.googleapis.com iam.googleapis.com
-gcloud iam service-accounts create $SA --display-name="psacc sheets sync"
+gcloud iam service-accounts create $SA --display-name="EV sheets sync"
 gcloud iam service-accounts keys create ~/google-sa.json --iam-account=$SA@$PROJECT.iam.gserviceaccount.com
 cloudshell download ~/google-sa.json && rm ~/google-sa.json
 ```
@@ -60,81 +70,64 @@ scp google-sa.json <user>@<serveur>:<chemin>/secrets/google-sa.json
 chmod 600 secrets/google-sa.json
 ```
 
-Puis **partager le Sheet** avec l'adresse `client_email` du JSON (`psacc-sheets-sync@<projet>.iam.gserviceaccount.com`) en **Éditeur**, sans notification.
+Puis **partager le Sheet** avec l'adresse `client_email` du JSON (`ev-sheets-sync@<projet>.iam.gserviceaccount.com`) en **Éditeur**, sans notification.
 
 ## 🚀 Installation
 
 ```bash
 git clone git@github.com:Demonic31/ev-dashboard-cost-tracker.git && cd ev-dashboard-cost-tracker
-cp .env.example .env          # LAN_IP, SPREADSHEET_ID, prix du comparatif…
-mkdir -p psacc/config secrets && chmod 700 secrets
-docker compose up -d psacc
+cp .env.example .env          # BRAND, LAN_IP, SPREADSHEET_ID, prix du comparatif…
+mkdir -p secrets && chmod 700 secrets
 ```
 
-1. **Connexion MyPeugeot** : ouvrir `http://<LAN_IP>:5000/config`, choisir **Peugeot** et le pays, saisir e-mail et mot de passe MyPeugeot, puis sur la page OTP demander le **SMS** et saisir le code avec le **PIN** de l'application.
-2. **Réglages** (`psacc/config/config.ini`, conteneur arrêté car il appartient à root et psacc le réécrit) : section `[Electricity config]`, `day price`, `night price`, `night hour start = 22h00`, `night hour end = 6h00`. Ces prix ne servent qu'au tableau de bord psacc ; le vrai calcul Tempo est fait dans le Sheet.
-3. **Batterie** : psacc la déduit du modèle (`battery_power` dans `cars.json`, 46 kWh pour une e-208 d'avant 2023, 51 kWh après). Si d'autres véhicules sont rattachés au compte, mettre l'e-208 **en premier** dans `cars.json` (le tableau de bord affiche le premier véhicule).
-4. **Synchro** : un essai à blanc, un passage réel, puis le service en continu :
+Puis suivre l'installation de la marque (Stellantis : [connexion psacc et premier passage de la synchro](brands/stellantis/README.md#-installation)), et lancer le dashboard (voir [Front web](#️-front-web)).
 
-```bash
-docker compose run --rm psacc-sheets-sync --once --dry-run
-docker compose run --rm psacc-sheets-sync --once
-docker compose up -d psacc-sheets-sync
-docker compose logs -f psacc-sheets-sync
-```
+## 🔍 Synchro du Sheet
 
-## 🔍 Fonctionnement de la synchro
+Chaque marque a sa synchro, qui remplit le Sheet au format commun (voir celle de [Stellantis](brands/stellantis/README.md#-fonctionnement-de-la-synchro)). Règles communes :
 
-* **Lecture** : copie de `info.db` (+ WAL) dans un dossier temporaire à chaque passage ; la base psacc, montée en lecture seule, n'est jamais verrouillée. Les dates psacc sont en **UTC** et sont converties en heure de Paris (`YYYY-MM-DD HH:MM:SS`, écrites en `USER_ENTERED` : le Sheet en `fr_FR` les reconnaît comme dates).
-* **Couleurs Tempo** (`A:B`) : [api-couleur-tempo.fr](https://www.api-couleur-tempo.fr) (`/api/joursTempo?periode[]=2025-2026` pour l'historique, `/api/jourTempo/today|tomorrow`), de la première charge (à défaut la première position) jusqu'à demain si publié.
-* **Recharges** (`A:N` uniquement) : une ligne par charge **terminée** (`battery.stop_at` renseigné), identifiant `C-<début UTC>`. Les kWh (`battery.kw` = capacité × % gagné) sont répartis en Bleu/Blanc/Rouge × HC/HP : jour Tempo = `date(t − 6h)`, HC de 22h à 6h, au prorata du % gagné entre deux points de la **courbe de charge** (`battery_curve`), à défaut au prorata du temps. Une charge dont une couleur n'est pas encore connue est reprise au passage suivant. Compteur km : celui du début de charge, sinon la dernière position connue avant la charge.
-* **Trajets** (`A:G` uniquement) : psacc ne stocke pas les trajets ; ils sont recalculés depuis la table `position` avec **les mêmes règles que psacc** (arrêt si vitesse moyenne quasi nulle, recharge détectée ou trou de plus de 2 h ; trajets aberrants écartés). Le dernier trajet n'est écrit que lorsqu'il est clos.
-* **Réveil pendant la charge** : à chaque heure de `WAKEUP_AT` (par défaut 3h et 5h55), la synchro lit le dernier état connu dans le cache de psacc (`/get_vehicleinfo/<VIN>?from_cache=1`, sans réveil). Si la voiture est « en charge », elle demande un réveil à psacc (`/wakeup/<VIN>`) : la voiture renvoie son état et psacc ajoute un point à la courbe de charge (milieu de nuit, et niveau juste avant la fin des heures creuses). Aucun réveil sinon, ni en `DRY_RUN`. Test manuel : `docker compose run --rm psacc-sheets-sync --check-wakeup --dry-run`.
-* **Trajets saisis à la main** (p. ex. import d'un export CSV MyPeugeot) : identifiant `M-<début UTC>` (tout ID ne commençant pas par `T-`). La synchro ne les modifie jamais et n'écrit pas un trajet psacc qui chevauche leur plage horaire. Sans conso connue, laisser `E:F` vides : le kWh/100 km (voiture) du `Dashboard` ne compte que les km des trajets dont les kWh sont renseignés.
-* **Km de la première charge** (`Recharges!U2`) : faute de charge précédente, la référence est le dernier compteur des `Trajets` terminés avant le jour de la charge (compteur de fin de journée), à défaut le compteur au départ du premier trajet du jour de la charge.
-* **Charges saisies à la main** (`Recharges`, ID ne commençant pas par `C-`, source p. ex. `manuel (estimation)`) : gardées telles quelles par la synchro, triées par date avec les autres.
-* **Écriture** : jamais la ligne 1 ni les colonnes de formules (`O:W` des recharges, `H` des trajets), aucune insertion de ligne (la formule `U2` utilise des plages fixes). Upsert par identifiant, lignes gardées triées par date de début ; si une charge doit s'intercaler, les lignes suivantes sont décalées dans `A:N` et un avertissement invite à vérifier les notes de la colonne `O`. Une lecture et au plus deux écritures groupées par passage (quotas Sheets), avec reprise automatique sur erreur 429/5xx. Relancer ne crée aucun doublon.
+* **Recharges** (`A:N`) : une ligne par charge terminée, identifiant `C-<début UTC>`, kWh répartis en Bleu/Blanc/Rouge × HC/HP (jour Tempo = `date(t − 6h)`, HC de 22h à 6h). **Trajets** (`A:G`) : identifiant `T-<début UTC>`. **Couleurs Tempo** (`A:B`) : [api-couleur-tempo.fr](https://www.api-couleur-tempo.fr).
+* **Saisies à la main** : une charge dont l'ID ne commence pas par `C-` (source p. ex. `manuel (estimation)`), ou un trajet dont l'ID ne commence pas par `T-` (p. ex. `M-<début UTC>`, import d'un export CSV de l'application de la marque), sont gardés tels quels ; la synchro n'écrit pas un trajet qui chevauche un trajet saisi à la main. Sans conso connue, laisser `E:F` vides : le kWh/100 km (voiture) du `Dashboard` ne compte que les km des trajets dont les kWh sont renseignés.
+* **Km de la première charge** (`Recharges!U2`) : faute de charge précédente, la référence est le dernier compteur des `Trajets` terminés avant le jour de la charge, à défaut le compteur au départ du premier trajet du jour de la charge.
+* **Écriture** : jamais la ligne 1 ni les colonnes de formules (`O:W` des recharges, `H` des trajets), aucune insertion de ligne. Upsert par identifiant, lignes gardées triées par date de début. Relancer ne crée aucun doublon.
 
 | Variable (`.env`) | Défaut | Rôle |
 | :--- | :--- | :--- |
-| `LAN_IP` | — | IP locale sur laquelle psacc écoute (jamais `0.0.0.0`) |
-| `PSACC_VERSION` | `v3.7.10` | Tag de l'image psacc |
+| `BRAND` | `stellantis` | Marque : dossier de [`brands/`](brands/) (services et source de données du dashboard) |
+| `LAN_IP` | — | IP locale sur laquelle les services écoutent (jamais `0.0.0.0`) |
 | `SPREADSHEET_ID` | — | ID du Google Sheet |
-| `VIN` | vide | VIN de l'e-208 ; vide = premier véhicule électrique de `cars.json` |
-| `SYNC_INTERVAL` | `3600` | Secondes entre deux passages |
-| `DRY_RUN` | `false` | `true` : calcule et journalise sans écrire (et n'envoie aucun réveil) |
-| `WAKEUP_AT` | `03:00,05:55` | Heures (Paris) de réveil de la voiture, seulement si une charge est en cours ; vide = jamais |
 | `DASHBOARD_PORT` | `8080` | Port du front web (publié sur `LAN_IP` uniquement) |
 | `DASHBOARD_CACHE_SECONDS` | `300` | Durée du cache des données du Sheet côté front |
 | `BASE_PRICE_KWH` | vide | Prix TTC du kWh en option Base |
 | `HCHP_HC_PRICE_KWH` / `HCHP_HP_PRICE_KWH` | vide | Prix HC / HP de l'option Heures creuses |
 | `ZEN_LOW_PRICE_KWH` / `ZEN_HIGH_PRICE_KWH` | vide | Prix bas (week-end, fériés, HC semaine) / haut (HP semaine) de Zen Week-End + HC |
 | `PETROL_L_100KM` | vide | Consommation de la voiture thermique de référence (L/100 km) |
-| `PSACC_URL` | `http://psacc:5000` | API web de psacc pour le SOH et l'état de la voiture (fixée dans `docker-compose.yml`) |
 | `BATTERY_KWH` | vide | Capacité de la batterie (kWh) : affiche dans le tableau des recharges les kWh batterie en % de la capacité (vide = pas de %) |
 | `PETROL_FUEL` | `sp98` | Carburant (`sp98`, `sp95`, `e10`, `e85`, `gazole`, `gplc`) |
 | `PETROL_DEPARTEMENT` | vide | Code département pour le prix moyen ; vide = France entière |
-| `VEHICLE_NAME` | vide | Titre de l'en-tête « Marque Modèle » ; vide = lu sur psacc (`brand` et `label` de `/get_vehicles`, ex. « Peugeot e-208 ») |
+| `VEHICLE_NAME` | vide | Titre de l'en-tête « Marque Modèle » ; vide = lu sur la source de la marque (ex. « Peugeot e-208 ») |
 | `DASHBOARD_LOGO` | vide | Logo personnel de l'en-tête : nom d'un fichier `.svg` ou `.png` (512 Ko max.) déposé dans `local/` ; vide = icône de l'application |
 | `DASHBOARD_LOGO_INVERT` | vide | `1` : inverse le logo personnel en thème sombre (logo noir monochrome) |
+
+Variables propres à la marque (VIN, intervalle de synchro, réveils…) : voir son README.
 
 ## 🖥️ Front web
 
 ```bash
-docker compose up -d --build e208-dashboard
+docker compose up -d --build ev-dashboard
 ```
 
 Puis ouvrir `http://<LAN_IP>:8080`. La page affiche ce que le Sheet a calculé, sans rien recalculer de son côté :
 
-* **En-tête** : la marque et le modèle du véhicule (lus sur psacc, ou `VEHICLE_NAME`) avec l'icône de l'application. Pour afficher un autre logo, par exemple celui de la marque, déposer le fichier dans `local/` (dossier non versionné, monté en lecture seule) et renseigner `DASHBOARD_LOGO` : voir [`local/README.md`](local/README.md). Les logos de marque ne sont pas fournis dans le dépôt, car ce sont des marques déposées.
+* **En-tête** : la marque et le modèle du véhicule (lus sur la source de la marque, ou `VEHICLE_NAME`) avec l'icône de l'application. Pour afficher un autre logo, par exemple celui de la marque, déposer le fichier dans `local/` (dossier non versionné, monté en lecture seule) et renseigner `DASHBOARD_LOGO` : voir [`local/README.md`](local/README.md). Les logos de marque ne sont pas fournis dans le dépôt, car ce sont des marques déposées.
 * **Indicateurs, coût par mois, énergie par tranche** : en période « Tout », ce sont les valeurs du `Dashboard` ; pour une autre période (saison Tempo, 12 derniers mois, mois, dates libres), les mêmes formules sont appliquées aux lignes de `Recharges` et `Trajets` de la période. Par défaut, la page s'ouvre sur le **mois en cours** ; la période choisie ensuite est mémorisée dans le navigateur.
-* **Santé batterie (SOH)**, en haut de page : dernier SOH relevé par psacc (champ « resistance » de l'API Stellantis, qui ne mesure pas forcément la capacité restante), lu sur l'API web de psacc par le réseau Docker interne (`/get_vehicles` et `/battery/soh/<VIN>`, lecture seule, sans appel à Stellantis), relu toutes les heures.
-* **Voiture**, sous le SOH : niveau de batterie (couleur du rouge au vert selon la charge), autonomie estimée, état de charge (en charge, terminée, arrêtée, échec, débranchée) et compteur. Valeurs du dernier envoi de la voiture, lues dans le cache de psacc (`/get_vehicleinfo/<VIN>?from_cache=1` : la voiture n'est jamais réveillée), relues toutes les 5 min.
+* **Santé batterie (SOH)**, en haut de page : dernier indicateur fourni par la source de la marque, avec son origine (Stellantis : champ « resistance » relevé par psacc), relu toutes les heures. Masqué si la marque ne le fournit pas.
+* **Voiture**, sous le SOH : niveau de batterie (couleur du rouge au vert selon la charge), autonomie estimée, état de charge (en charge, terminée, arrêtée, échec, débranchée) et compteur. Valeurs du dernier envoi de la voiture, sans la réveiller, relues toutes les 5 min.
   * **Charge en cours estimée** : la voiture n'envoie son état qu'au début de la charge, environ 45 min après, à la fin et aux réveils de `WAKEUP_AT`. Entre deux, le niveau, l'autonomie (au prorata du niveau) et l'heure de fin sont **extrapolés** depuis le dernier relevé et recalculés chaque minute dans la page, avec un encart « Estimation » qui rappelle l'heure de la dernière synchro ; la part estimée de la jauge est hachurée. Vitesse de charge (% par heure, sa source est indiquée dans l'encart) : mesurée dans la charge en cours dès que deux relevés sont espacés d'au moins 1 h, sinon médiane des 10 dernières recharges, sinon déduite du temps restant annoncé par la voiture (souvent optimiste ; son heure de fin reste affichée pour comparer). Chaque nouveau relevé sert de nouveau point de départ. Une fois l'heure de fin estimée passée, la charge est affichée « probablement terminée » ; au-delà de 14 h sans relevé, plus d'estimation (une charge interrompue ne se voit qu'à la synchro suivante).
 * **Trajets par mois**, dans le tableau des trajets : une ligne par mois (du plus récent au plus ancien) avec le nombre de trajets, les km, les kWh, le kWh/100 km et le dernier compteur ; un clic déplie les trajets du mois (replié par défaut).
 * **Recharges par mois**, dans le tableau des recharges : une ligne par mois avec le nombre de recharges, les kWh batterie et compteur, la répartition HC/HP, le coût, le €/kWh, les km et le €/100 km ; un clic déplie les recharges du mois (replié par défaut).
 * **Équivalent essence de chaque recharge**, sous son coût (et en total sur la ligne du mois) : ce qu'aurait coûté le même trajet en voiture thermique. Km de la ligne (colonne « Km », compteur) quand ils sont connus, sinon km permis par la recharge = kWh batterie ÷ consommation moyenne des `Trajets` (kWh/100 km) ; × `PETROL_L_100KM` × prix moyen du carburant **le jour de la recharge** (même moyenne que ci-dessous, appliquée aux [archives journalières officielles](https://www.prix-carburants.gouv.fr/rubrique/opendata/)). Ces prix passés sont téléchargés en tâche de fond (un fichier d'environ 1 Mo par jour de recharge, une seule fois) et gardés dans le volume Docker `dashboard-data` ; en attendant, et pour les recharges du jour, c'est le prix actuel qui sert. Le détail du calcul s'affiche au survol.
-* **Courbe de charge**, dans le tableau des recharges : un clic sur une recharge déplie le graphique du niveau de batterie selon l'heure, heures creuses en fond (replié par défaut). Les points viennent de la table `battery_curve` de psacc, lue sur une copie de `info.db` (`psacc/config` monté en lecture seule, relu toutes les 5 min). La voiture n'envoie que 2 ou 3 points par charge lente (début, ~45 min, fin), donc la courbe est interpolée entre eux. Une recharge saisie à la main est tracée en droite du début à la fin. Le survol donne la puissance moyenne entre deux points (si `BATTERY_KWH` est renseigné).
+* **Courbe de charge**, dans le tableau des recharges : un clic sur une recharge déplie le graphique du niveau de batterie selon l'heure, heures creuses en fond (replié par défaut). Les points viennent de la source de la marque (relus toutes les 5 min) ; la voiture n'en envoie souvent que quelques-uns par charge, donc la courbe est interpolée entre eux. Une recharge saisie à la main est tracée en droite du début à la fin. Le survol donne la puissance moyenne entre deux points (si `BATTERY_KWH` est renseigné).
 * **Saison Tempo** (1er septembre → 31 août) : jours blancs, rouges et bleus restants, couleur du lendemain et calendrier de la saison (replié par défaut, un clic le déplie), depuis [api-couleur-tempo.fr](https://www.api-couleur-tempo.fr) (cache d'une heure).
 * **Comparatif des offres**, pour la même énergie (kWh facturés de la période) et hors abonnements. Une offre dont le prix n'est pas renseigné est signalée « à renseigner » :
   * **Tempo** : ton coût réel, calculé par le Sheet ;
@@ -164,13 +157,13 @@ Garde-fous : une requête qui porte des en-têtes de reverse proxy (`X-Forwarded
 Générer l'empreinte (le mot de passe est demandé sans être affiché, 12 caractères minimum) :
 
 ```bash
-docker compose run --rm e208-dashboard --hash-password
+docker compose run --rm ev-dashboard --hash-password
 ```
 
 Enrôler l'application d'authentification : la commande affiche un QR code (et la clé à saisir à la main), demande un code pour vérifier, puis met la clé dans `.env` :
 
 ```bash
-L=$(docker compose run --rm -T e208-dashboard --setup-totp | grep '^DASHBOARD_TOTP_SECRET=') && sed -i "s|^DASHBOARD_TOTP_SECRET=.*|$L|" .env && docker compose up -d e208-dashboard
+L=$(docker compose run --rm -T ev-dashboard --setup-totp | grep '^DASHBOARD_TOTP_SECRET=') && sed -i "s|^DASHBOARD_TOTP_SECRET=.*|$L|" .env && docker compose up -d ev-dashboard
 ```
 
 * **Code TOTP** (RFC 6238, 30 s) : accepté pour la tranche en cours, la précédente ou la suivante (décalage d'horloge) ; un code déjà utilisé est refusé ; il n'est vérifié qu'avec le bon mot de passe. La clé ne peut pas être hachée (le serveur en a besoin pour calculer les codes) : elle reste dans `.env`, jamais dans git. Téléphone perdu : relancer `--setup-totp` depuis le serveur.
@@ -182,7 +175,7 @@ L=$(docker compose run --rm -T e208-dashboard --setup-totp | grep '^DASHBOARD_TO
 
 ### 🌐 Accès depuis Internet avec le proxy intégré (Caddy)
 
-Solution clé en main, sans Synology : un conteneur [Caddy](https://caddyserver.com/) (profil compose `proxy`, facultatif) reçoit les connexions sur les ports 80 et 443, obtient et renouvelle seul le certificat **Let's Encrypt**, redirige HTTP vers HTTPS (avec HSTS) et transmet au dashboard l'IP réelle du visiteur. Seul le dashboard est publié : psacc (port 5000) reste sur le LAN.
+Solution clé en main, sans Synology : un conteneur [Caddy](https://caddyserver.com/) (profil compose `proxy`, facultatif) reçoit les connexions sur les ports 80 et 443, obtient et renouvelle seul le certificat **Let's Encrypt**, redirige HTTP vers HTTPS (avec HSTS) et transmet au dashboard l'IP réelle du visiteur. Seul le dashboard est publié : les services de la marque (psacc, port 5000) restent sur le LAN.
 
 1. **Nom de domaine** : un enregistrement DNS `A` (et `AAAA` en IPv6) de ton domaine, p. ex. `ve.example.fr`, vers l'IP publique de ta box. IP publique qui change : un DNS dynamique (DynDNS, DuckDNS, celui de ta box…).
 2. **Box** : rediriger les ports **TCP 80 et 443** (et UDP 443, facultatif, pour HTTP/3) vers l'IP LAN du serveur. Jamais 5000 ni 8080. Le port 80 sert à Let's Encrypt (validation et renouvellement) et à la redirection vers HTTPS.
@@ -194,7 +187,7 @@ Solution clé en main, sans Synology : un conteneur [Caddy](https://caddyserver.
 4. **Démarrer** :
    ```bash
    docker compose --profile proxy up -d
-   docker logs -f e208-caddy   # attendre « certificate obtained successfully »
+   docker logs -f ev-caddy   # attendre « certificate obtained successfully »
    ```
 5. Ouvrir `https://ve.example.fr` : la mire de connexion s'affiche.
 
@@ -206,7 +199,7 @@ Solution clé en main, sans Synology : un conteneur [Caddy](https://caddyserver.
 
 ### 🧪 PREPROD
 
-[`preprod/docker-compose.yml`](preprod/docker-compose.yml) lance un second dashboard (projet `e208-preprod`, port `8081` sur l'IP LAN) avec le code de la branche en cours, pour tester sans toucher à la PROD. Il lit le même Sheet et la base et l'API psacc de la pile principale, en lecture seule, sans synchro ni réveil. Son app installable s'appelle « VE PREPROD », avec une icône et un logo de mire marqués « TEST » (`APP_LABEL`), pour la distinguer de celle de la PROD.
+[`preprod/docker-compose.yml`](preprod/docker-compose.yml) lance un second dashboard (projet `ev-preprod`, port `8081` sur l'IP LAN) avec le code de la branche en cours, pour tester sans toucher à la PROD. Il lit le même Sheet et les données de la marque (base et API psacc) de la pile principale, en lecture seule, sans synchro ni réveil. Son app installable s'appelle « VE PREPROD », avec une icône et un logo de mire marqués « TEST » (`APP_LABEL`), pour la distinguer de celle de la PROD.
 
 ```bash
 cp preprod/.env.example preprod/.env && chmod 600 preprod/.env   # chemins de la pile principale, mot de passe, Synology
@@ -219,43 +212,24 @@ Arrêtée, la PREPROD n'est pas coupée du Synology : un petit serveur (`web/pau
 ## 🔄 Mise à jour
 
 ```bash
-# psacc : changer PSACC_VERSION dans .env (voir https://github.com/flobz/psa_car_controller/releases)
-docker compose pull psacc && docker compose up -d psacc
-# synchro et front : après git pull ou modification du code
 git pull
-docker compose build psacc-sheets-sync && docker compose up -d psacc-sheets-sync
-docker compose up -d --build e208-dashboard
+docker compose up -d --build --remove-orphans
 # proxy intégré (si utilisé) : changer CADDY_VERSION dans .env
 docker compose --profile proxy pull caddy && docker compose --profile proxy up -d caddy
 ```
 
+`--remove-orphans` retire les conteneurs d'un service renommé (p. ex. `e208-dashboard`, devenu `ev-dashboard` en 0.9.0). Mise à jour des outils de la marque : voir son README (psacc : [mise à jour](brands/stellantis/README.md#-mise-à-jour-de-psacc)).
+
 ## 💾 Sauvegarde
 
-Tout l'état est dans `psacc/config/` (session Stellantis, `cars.json`, `config.ini`, base `info.db`) et `secrets/` : à sauvegarder **conteneur arrêté** pour une base cohérente.
-
-```bash
-docker compose stop psacc
-tar czf ~/psacc-config-$(date +%F).tar.gz psacc/config --exclude='*.apk*'
-docker compose start psacc
-```
-
-Les fichiers `mypeugeot.apk*` (~120 Mo) sont retéléchargés automatiquement et n'ont pas besoin d'être sauvegardés.
-
-## 🔐 Relancer la connexion si la session expire
-
-Symptômes : `Please reconnect by going to config web page` dans `docker compose logs psacc`, plus de nouvelles positions, la synchro ne voit plus de nouvelles charges.
-
-1. Ouvrir `http://<LAN_IP>:5000/config` et refaire la connexion (marque, identifiants MyPeugeot, OTP par SMS + PIN).
-2. `docker compose restart psacc`, puis vérifier les logs (`access token refreshed`, `new position recorded`).
-
-Les données déjà enregistrées sont conservées ; rien à faire côté synchro.
+À garder : `.env`, `secrets/`, `local/` et les données de la marque (Stellantis : `psacc/config/`, voir [sa sauvegarde](brands/stellantis/README.md#-sauvegarde)). Le Google Sheet est sauvegardé par Google Drive.
 
 ## 🔒 Sécurité
 
-* `.env`, `secrets/` et `psacc/config/` (jetons Stellantis, VIN, positions GPS) sont exclus de git.
-* La clé Google est montée en *secret* Docker en lecture seule ; la synchro tourne en utilisateur non root et monte la config psacc en lecture seule.
-* Le front (port 8080) n'est publié que sur l'IP locale, comme psacc ; pour un accès depuis Internet, il passe par un reverse proxy (Caddy intégré ou Synology) et la mire de connexion. Sans mot de passe configuré, les requêtes venant d'Internet sont refusées.
-* Le port 5000 n'est publié que sur l'IP locale : ne pas l'exposer sur Internet (l'interface permet de piloter la voiture).
+* `.env`, `secrets/`, `local/` et les données des marques (`psacc/config/` : jetons Stellantis, VIN, positions GPS) sont exclus de git, et du contexte de build Docker (liste blanche dans [`.dockerignore`](.dockerignore)).
+* La clé Google est montée en *secret* Docker en lecture seule ; la synchro et le dashboard tournent en utilisateur non root et lisent les données de la marque en lecture seule.
+* Le front (port 8080) n'est publié que sur l'IP locale ; pour un accès depuis Internet, il passe par un reverse proxy (Caddy intégré ou Synology) et la mire de connexion. Sans mot de passe configuré, les requêtes venant d'Internet sont refusées.
+* Les services des marques (p. ex. psacc, port 5000, qui permet de piloter la voiture) ne sont publiés que sur l'IP locale : ne pas les exposer sur Internet.
 
 ## 🙏 Solutions utilisées
 
