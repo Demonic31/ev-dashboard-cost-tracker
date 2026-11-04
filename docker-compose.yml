@@ -63,9 +63,15 @@ services:
       # IP du reverse proxy, ou nom de service Docker (« caddy » pour le proxy du profil « proxy » ci-dessous)
       TRUSTED_PROXY: ${TRUSTED_PROXY:-}
       LOGIN_SCOPE: ${LOGIN_SCOPE:-proxy}
+      # Titre « Marque Modèle » (vide = lu sur psacc) et logo personnel facultatif (fichier de local/)
+      VEHICLE_NAME: ${VEHICLE_NAME:-}
+      DASHBOARD_LOGO: ${DASHBOARD_LOGO:-}
+      DASHBOARD_LOGO_INVERT: ${DASHBOARD_LOGO_INVERT:-}
     volumes:
       # Base psacc en lecture seule, copiée avant lecture (courbes de charge)
       - ./psacc/config:/config:ro
+      # Fichiers personnels non versionnés (logo), en lecture seule
+      - ./local:/local:ro
       # Prix passés du carburant (équivalent essence des recharges), gardés entre deux redémarrages
       - dashboard-data:/data
     ports:

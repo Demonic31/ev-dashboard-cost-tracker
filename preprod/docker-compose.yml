@@ -28,6 +28,8 @@ services:
     volumes:
       - ${PSACC_CONFIG_DIR:?PSACC_CONFIG_DIR manquant}:/config:ro
       - dashboard-data:/data
+      # Dossier local/ de la pile principale (logo personnel), en lecture seule
+      - ${LOCAL_DIR:-../local}:/local:ro
     secrets: [google-sa]
     networks: [psacc]
 

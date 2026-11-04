@@ -57,6 +57,10 @@ STATIC_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; char
 # Libellé ajouté au nom de l'app installée (PWA), ex. « PREPROD » : icônes et logo de la mire marqués « TEST » ;
 # vide en PROD
 APP_LABEL = os.environ.get("APP_LABEL", "").strip()
+# Logo personnel facultatif (ex. celui de la marque), à déposer dans local/ (non versionné, monté en lecture seule)
+LOCAL_DIR = os.environ.get("LOCAL_DIR", "/local")
+LOGO_TYPES = {".svg": "image/svg+xml", ".png": "image/png"}
+LOGO_MAX_BYTES = 512 * 1024
 # Tout est servi depuis le conteneur (Chart.js et logo compris) : pas de script ni de ressource externe
 SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
@@ -220,6 +224,50 @@ class Psacc:
 
     def get(self, path):
         return requests.get(f"{self.url}{path}", timeout=15).json()
+
+
+class VehicleName:
+    """« Marque Modèle » affiché en titre : VEHICLE_NAME s'il est défini, sinon lu sur psacc (ex. « Peugeot e-208 »)."""
+
+    def __init__(self, psacc, forced):
+        self.psacc, self.forced = psacc, forced
+
+    @cached(3600)
+    def get(self):
+        if self.forced:
+            return {"name": self.forced}
+        try:
+            vin = self.psacc.vin()
+            car = next(c for c in self.psacc.get("/get_vehicles") if c.get("vin") == vin)
+            name = " ".join(str(car.get(k) or "").strip() for k in ("brand", "label")).strip()
+            return {"name": name} if name else {"error": "marque et modèle inconnus de psacc"}
+        except (requests.RequestException, ValueError, StopIteration) as exc:
+            log.warning("marque et modèle indisponibles : %s", exc)
+            return {"error": str(exc) or type(exc).__name__}
+
+
+class CustomLogo:
+    """Logo personnel (DASHBOARD_LOGO : nom d'un fichier .svg ou .png de local/), affiché à la place de l'icône
+    de l'app dans l'en-tête. Relu à chaque requête : le remplacer ne demande pas de redémarrage."""
+
+    def __init__(self, name, invert):
+        self.name, self.invert = (name or "").strip(), invert
+        if self.name and not self.read():
+            log.warning("DASHBOARD_LOGO ignoré : %s introuvable dans %s, ou pas en .svg/.png, ou trop gros "
+                        "(%d Ko max.)", self.name, LOCAL_DIR, LOGO_MAX_BYTES // 1024)
+
+    def read(self):
+        """(contenu, type) du logo, ou None s'il n'y en a pas ou qu'il n'est pas valable."""
+        if not self.name:
+            return None
+        base = os.path.realpath(LOCAL_DIR)
+        file = os.path.realpath(os.path.join(base, self.name))
+        ctype = LOGO_TYPES.get(os.path.splitext(file)[1].lower())
+        if not (file.startswith(base + os.sep) and ctype and os.path.isfile(file)) \
+                or os.path.getsize(file) > LOGO_MAX_BYTES:
+            return None
+        with open(file, "rb") as f:
+            return f.read(), ctype
 
 
 class BatteryHealth:
@@ -683,7 +731,18 @@ def login_page(message="", totp=False):
         .replace("{{totp}}", TOTP_FIELD if totp else "").encode()
 
 
-def make_handler(mirror, season, fuel, history, offers, battery_kwh, health, car, curves, gate):
+def index_page(logo):
+    with open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8") as f:
+        html = f.read()
+    default = '<img class="logo" src="static/favicon.svg" alt="">'
+    if logo.read():
+        html = html.replace(default, f'<img class="logo{" invert" if logo.invert else ""}" src="local/logo" alt="">')
+    elif APP_LABEL:  # PREPROD : icône marquée « TEST »
+        html = html.replace(default, '<img class="logo" src="static/favicon-test.svg" alt="">')
+    return html.encode()
+
+
+def make_handler(mirror, season, fuel, history, offers, battery_kwh, health, car, curves, gate, vehicle, logo):
     class Handler(BaseHTTPRequestHandler):
         server_version = "e208-dashboard"
 
@@ -790,14 +849,20 @@ def make_handler(mirror, season, fuel, history, offers, battery_kwh, health, car
                 else:
                     self.send(404, b"not found", "text/plain")
             elif path in ("/", "/index.html"):
-                with open(os.path.join(STATIC_DIR, "index.html"), "rb") as f:
-                    self.send(200, f.read(), "text/html; charset=utf-8", self.renewed())
+                self.send(200, index_page(logo), "text/html; charset=utf-8", self.renewed())
+            elif path == "/local/logo":
+                found = logo.read()
+                if found:
+                    self.send(200, *found)
+                else:
+                    self.send(404, b"not found", "text/plain")
             elif path == "/api/data":
                 try:
                     force = "refresh=1" in self.path
                     sheet = mirror.get(force=force)
                     car_state, charge_curves = car.get(force=force), curves.get(force=force)
                     data = dict(sheet, season=season.get(force=force), battery_kwh=battery_kwh,
+                                vehicle=vehicle.get(force=force),
                                 health=health.get(force=force), car=car_state, charge_curves=charge_curves,
                                 charge_estimate=charge_estimate(car_state, charge_curves),
                                 offers=dict(offers, fuel=fuel.get() if offers["petrol_l_100km"] else None),
@@ -872,6 +937,8 @@ def main():
     psacc = Psacc(os.environ.get("PSACC_URL", "http://psacc:5000"), os.environ.get("VIN") or None)
     health, car = BatteryHealth(psacc), CarStatus(psacc)
     curves = ChargeCurves(psacc, os.environ.get("PSACC_CONFIG", "/config"))
+    vehicle = VehicleName(psacc, os.environ.get("VEHICLE_NAME", "").strip())
+    logo = CustomLogo(os.environ.get("DASHBOARD_LOGO"), os.environ.get("DASHBOARD_LOGO_INVERT", "") in ("1", "true", "oui"))
     gate = PasswordGate(os.environ.get("DASHBOARD_PASSWORD_HASH", "").strip(), os.environ.get("SESSION_SECRET", "").strip(),
                         os.environ.get("TRUSTED_PROXY", "").strip(), os.environ.get("LOGIN_SCOPE", "proxy").strip(),
                         os.environ.get("DASHBOARD_TOTP_SECRET", "").strip())
@@ -881,7 +948,8 @@ def main():
         log.info("mire de connexion active%s (%s)", " avec code TOTP" if gate.totp_secret else "", scope)
     port = int(os.environ.get("PORT", "8080"))
     log.info("front e-208 sur le port %d (comparatif : %s)", port, json.dumps(offers))
-    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, history, offers, env_price("BATTERY_KWH"), health, car, curves, gate)).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, history, offers, env_price("BATTERY_KWH"), health, car, curves, gate,
+                                                         vehicle, logo)).serve_forever()
 
 
 if __name__ == "__main__":

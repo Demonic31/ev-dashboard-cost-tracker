@@ -106,6 +106,14 @@ function chargeEstimate() {
 const hm = d => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 const hDuration = h => `${Math.floor(h)} h ${String(Math.round(h % 1 * 60) % 60).padStart(2, "0")}`;
 
+// « Marque Modèle » du véhicule (psacc ou VEHICLE_NAME) ; « Dashboard VE » tant qu'il est inconnu
+function renderTitle() {
+  const name = data.vehicle?.name;
+  if (!name) return;
+  document.getElementById("title").textContent = name;
+  document.title = `${name} · Dashboard VE`;
+}
+
 function renderCar() {
   const el = document.getElementById("car"), c = data.car || {};
   el.hidden = false;
@@ -485,7 +493,7 @@ async function load(force = false) {
     err.style.display = "none";
     document.getElementById("fetched").textContent = "Données du Sheet au " + new Date(data.fetched_at).toLocaleString("fr-FR");
     document.getElementById("logout").hidden = !data.auth;
-    renderHealth(); renderCar(); renderSeason(); render();
+    renderTitle(); renderHealth(); renderCar(); renderSeason(); render();
   } catch (e) {
     err.textContent = "Impossible de lire le Google Sheet : " + e.message;
     err.style.display = "block";

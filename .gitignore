@@ -4,3 +4,5 @@ psacc/config/
 __pycache__/
 *.pyc
 preprod/.env
+local/*
+!local/README.md

@@ -114,6 +114,9 @@ docker compose logs -f psacc-sheets-sync
 | `BATTERY_KWH` | vide | Capacité de la batterie (kWh) : affiche dans le tableau des recharges les kWh batterie en % de la capacité (vide = pas de %) |
 | `PETROL_FUEL` | `sp98` | Carburant (`sp98`, `sp95`, `e10`, `e85`, `gazole`, `gplc`) |
 | `PETROL_DEPARTEMENT` | vide | Code département pour le prix moyen ; vide = France entière |
+| `VEHICLE_NAME` | vide | Titre de l'en-tête « Marque Modèle » ; vide = lu sur psacc (`brand` et `label` de `/get_vehicles`, ex. « Peugeot e-208 ») |
+| `DASHBOARD_LOGO` | vide | Logo personnel de l'en-tête : nom d'un fichier `.svg` ou `.png` (512 Ko max.) déposé dans `local/` ; vide = icône de l'application |
+| `DASHBOARD_LOGO_INVERT` | vide | `1` : inverse le logo personnel en thème sombre (logo noir monochrome) |
 
 ## 🖥️ Front web
 
@@ -123,6 +126,7 @@ docker compose up -d --build e208-dashboard
 
 Puis ouvrir `http://<LAN_IP>:8080`. La page affiche ce que le Sheet a calculé, sans rien recalculer de son côté :
 
+* **En-tête** : la marque et le modèle du véhicule (lus sur psacc, ou `VEHICLE_NAME`) avec l'icône de l'application. Pour afficher un autre logo, par exemple celui de la marque, déposer le fichier dans `local/` (dossier non versionné, monté en lecture seule) et renseigner `DASHBOARD_LOGO` : voir [`local/README.md`](local/README.md). Les logos de marque ne sont pas fournis dans le dépôt, car ce sont des marques déposées.
 * **Indicateurs, coût par mois, énergie par tranche** : en période « Tout », ce sont les valeurs du `Dashboard` ; pour une autre période (saison Tempo, 12 derniers mois, mois, dates libres), les mêmes formules sont appliquées aux lignes de `Recharges` et `Trajets` de la période. Par défaut, la page s'ouvre sur le **mois en cours** ; la période choisie ensuite est mémorisée dans le navigateur.
 * **Santé batterie (SOH)**, en haut de page : dernier SOH relevé par psacc (champ « resistance » de l'API Stellantis, qui ne mesure pas forcément la capacité restante), lu sur l'API web de psacc par le réseau Docker interne (`/get_vehicles` et `/battery/soh/<VIN>`, lecture seule, sans appel à Stellantis), relu toutes les heures.
 * **Voiture**, sous le SOH : niveau de batterie (couleur du rouge au vert selon la charge), autonomie estimée, état de charge (en charge, terminée, arrêtée, échec, débranchée) et compteur. Valeurs du dernier envoi de la voiture, lues dans le cache de psacc (`/get_vehicleinfo/<VIN>?from_cache=1` : la voiture n'est jamais réveillée), relues toutes les 5 min.
@@ -141,7 +145,7 @@ Puis ouvrir `http://<LAN_IP>:8080`. La page affiche ce que le Sheet a calculé, 
 
 Le serveur relit le Sheet au plus toutes les `DASHBOARD_CACHE_SECONDS`. Le bouton 🔄 (Actualiser) force la relecture. Le compte de service n'y a qu'un accès en lecture.
 
-Tout est servi par le conteneur (Chart.js et logo compris, dans `web/static/vendor/`), avec une politique de sécurité stricte (`Content-Security-Policy` sans script externe ni inline, `X-Frame-Options: DENY`, `nosniff`).
+Tout est servi par le conteneur (Chart.js dans `web/static/vendor/`, logo personnel éventuel depuis `local/`), avec une politique de sécurité stricte (`Content-Security-Policy` sans script externe ni inline, `X-Frame-Options: DENY`, `nosniff`).
 
 ### 🔐 Mire de connexion et accès distant
 
@@ -268,3 +272,5 @@ Les données déjà enregistrées sont conservées ; rien à faire côté synchr
 ## 📄 Licence
 
 [MIT](LICENSE) © 2026 Demonic31. Les composants tiers gardent leur propre licence (voir « Solutions utilisées » ; Chart.js : [`web/static/vendor/LICENSE-chartjs.md`](web/static/vendor/LICENSE-chartjs.md)).
+
+Projet indépendant, non affilié à Stellantis. Peugeot est une marque de Stellantis. Les noms de marques et de modèles ne servent qu'à désigner les véhicules compatibles.
