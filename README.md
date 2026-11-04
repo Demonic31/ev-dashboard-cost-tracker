@@ -23,7 +23,20 @@ Captures du front web avec des **données fictives**.
 
 * Docker et le plugin `docker compose` ; l'utilisateur dans le groupe `docker` (`sudo usermod -aG docker $USER`, puis se reconnecter).
 * Un compte **MyPeugeot** sur lequel l'e-208 est rattachée (le code PIN de l'application et un téléphone pour l'OTP par SMS).
-* Un **Google Sheet** au format attendu (onglets `Recharges`, `Trajets`, `Couleurs Tempo`, `Paramètres`) et un **compte de service Google Cloud** (gratuit, sans facturation).
+* Un **Google Sheet** au format attendu (onglets `Dashboard`, `Recharges`, `Trajets`, `Couleurs Tempo`, `Paramètres`), créé à partir du [modèle fourni](#-google-sheet-à-partir-du-modèle), et un **compte de service Google Cloud** (gratuit, sans facturation).
+
+## 📊 Google Sheet à partir du modèle
+
+Le modèle [`sheet/modele-suivi-recharges.xlsx`](sheet/modele-suivi-recharges.xlsx) contient la structure complète, sans aucune donnée : formules, tableau de bord et ses deux graphiques, couleurs Tempo, grille tarifaire EDF Tempo et réglages.
+
+1. Dans [Google Drive](https://drive.google.com) : **Nouveau → Importer un fichier**, choisir `modele-suivi-recharges.xlsx`.
+2. Ouvrir le fichier importé avec **Google Sheets**, puis **Fichier → Enregistrer au format Google Sheets** (le `.xlsx` d'origine peut ensuite être supprimé du Drive). Le renommer à volonté.
+3. Onglet **`Paramètres`** : vérifier la grille Tempo (une ligne par date d'effet, à compléter à chaque évolution des prix), les heures creuses, le coefficient de pertes de la prise et l'abonnement.
+4. Noter l'**ID** du Sheet, la partie de l'adresse entre `/d/` et `/edit`, pour `SPREADSHEET_ID` dans `.env`.
+
+* La synchro remplit `Recharges` (colonnes `A:N`), `Trajets` (`A:G`) et `Couleurs Tempo` ; tout le reste est calculé par les formules : ne pas modifier la ligne 1 ni les colonnes `O:W` de `Recharges`.
+* Capacité du modèle : 1 500 recharges et 2 999 trajets (insérer des lignes en fin d'onglet au-delà).
+* Le fichier vient de l'export Excel de Google Sheets : les formules propres à Google (`QUERY`, `LET`, `ARRAYFORMULA`) sont restaurées à l'import dans Google Sheets, mais **le modèle ne fonctionne pas dans Excel ou LibreOffice**.
 
 ## 🔑 Compte de service Google
 
