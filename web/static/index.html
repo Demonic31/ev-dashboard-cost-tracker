@@ -80,7 +80,12 @@
   .car .estimate { grid-column: 1 / -1; font-size: .8rem; color: var(--muted); padding: 8px 10px; border-radius: 8px;
     border: 1px dashed var(--border); background: color-mix(in srgb, var(--accent) 6%, transparent); }
   .car .estimate b { color: var(--text); }
-  .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  /* 9 tuiles : 2 colonnes sur mobile (la dernière sur toute la largeur), 3 × 3 au-delà */
+  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+  @media (max-width: 640px) {
+    .kpis { grid-template-columns: 1fr 1fr; }
+    .kpis > .kpi:last-child:nth-child(odd) { grid-column: 1 / -1; text-align: center; }
+  }
   .kpi .label { color: var(--muted); font-size: .8rem; }
   .kpi .value { font-size: 1.45rem; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
   .kpi .sub { color: var(--muted); font-size: .78rem; }
