@@ -90,6 +90,22 @@ const CHARGE_STATES = { InProgress: ["En charge", "--good"], Finished: ["Termin�
                         Failure: ["Échec", "--bad"], Disconnected: ["Débranchée", "--muted"] };
 const isoDuration = d => { const m = /PT(?:(\d+)H)?(?:(\d+)M)?/.exec(d || ""); return m && (m[1] || m[2]) ? `${+m[1] || 0} h ${String(+m[2] || 0).padStart(2, "0")}` : ""; };
 
+// Charge en cours : la voiture n'envoie son état qu'au début, vers +45 min, à la fin et aux réveils. Entre deux, on
+// extrapole depuis le dernier relevé à la vitesse fournie par le serveur (data.charge_estimate), recalculé chaque minute.
+const ESTIMATE_MAX_H = 14;  // au-delà, relevé trop ancien pour estimer (charge interrompue ou débranchée ?)
+function chargeEstimate() {
+  const e = data.charge_estimate;
+  if (!e) return null;
+  const from = new Date(e.from_at), hours = (Date.now() - from) / 3.6e6;
+  if (hours < 5 / 60 || hours > ESTIMATE_MAX_H) return null;  // relevé tout frais, ou trop ancien
+  const end = new Date(from.getTime() + Math.max(0, e.target - e.from_level) / e.rate * 3.6e6);
+  const level = Math.min(e.target, e.from_level + e.rate * hours), done = Date.now() >= end;
+  return { ...e, from, end, done, level, hoursLeft: Math.max(0, (end - Date.now()) / 3.6e6),
+           autonomy: e.from_autonomy && e.from_level ? e.from_autonomy * level / e.from_level : null };
+}
+const hm = d => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+const hDuration = h => `${Math.floor(h)} h ${String(Math.round(h % 1 * 60) % 60).padStart(2, "0")}`;
+
 function renderCar() {
   const el = document.getElementById("car"), c = data.car || {};
   el.hidden = false;
@@ -98,19 +114,27 @@ function renderCar() {
     document.getElementById("carItems").innerHTML = `<div class="empty">État indisponible : ${esc(c.error || "pas de relevé psacc")}</div>`;
     return;
   }
-  const lvl = Math.max(0, Math.min(100, num(c.level)));
+  const est = c.status === "InProgress" ? chargeEstimate() : null;
+  const real = Math.max(0, Math.min(100, num(c.level))), lvl = est ? est.level : real;
   const at = c.updated_at ? new Date(c.updated_at.replace(" ", "T")) : null;
-  document.getElementById("carAt").textContent = at ? "dernier relevé le " + at.toLocaleString("fr-FR",
-    { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
-  const [label, color] = CHARGE_STATES[c.status] || [c.status || "Inconnue", "--muted"];
-  const extra = c.status === "InProgress" ? [c.charging_rate ? `${fr(c.charging_rate, 0)} km/h` : "",
-    isoDuration(c.remaining_time) && `fin dans ${isoDuration(c.remaining_time)}`].filter(Boolean).join(" · ") : "";
+  const atText = d => d.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  document.getElementById("carAt").textContent = at ? "dernier relevé le " + atText(at) : "";
+  const [label, color] = est?.done ? ["Probablement terminée", "--bleu"] : CHARGE_STATES[c.status] || [c.status || "Inconnue", "--muted"];
+  let extra = "";
+  if (est) extra = est.done ? `fin estimée vers ${hm(est.end)}`
+    : `fin dans ≈ ${hDuration(est.hoursLeft)} (vers ${hm(est.end)})` + (est.car_end_at ? `\nla voiture annonçait ${hm(new Date(est.car_end_at))}` : "");
+  else if (c.status === "InProgress") extra = [c.charging_rate ? `${fr(c.charging_rate, 0)} km/h` : "",
+    isoDuration(c.remaining_time) && `fin dans ${isoDuration(c.remaining_time)}`].filter(Boolean).join(" · ");
+  const approx = est ? "≈ " : "";
   document.getElementById("carItems").innerHTML = `
-    <div><div class="label">Niveau</div><div class="n" style="color:hsl(${1.2 * lvl} 70% var(--lvl-l))">${fr(lvl, 0)} %</div>
-      <div class="level"><span style="width:${lvl}%;background-size:${lvl ? 10000 / lvl : 100}% 100%"></span></div></div>
-    <div><div class="label">Autonomie estimée</div><div class="n">${fr(c.autonomy, 0)} <small>km</small></div></div>
-    <div><div class="label">Charge</div><span class="state" style="--c:var(${color})">${esc(label)}</span>${extra ? `<div class="sub">${esc(extra)}</div>` : ""}</div>
-    <div><div class="label">Compteur</div><div class="n">${fr(c.mileage, 0)} <small>km</small></div></div>`;
+    <div><div class="label">Niveau</div><div class="n" style="color:hsl(${1.2 * lvl} 70% var(--lvl-l))">${approx}${fr(lvl, 0)} %</div>
+      <div class="level"><span style="width:${lvl}%;background-size:${lvl ? 10000 / lvl : 100}% 100%"></span>${est && lvl > real
+        ? `<i class="est" style="left:${real}%;width:${lvl - real}%"></i>` : ""}</div></div>
+    <div><div class="label">Autonomie estimée</div><div class="n">${approx}${fr(est?.autonomy ?? c.autonomy, 0)} <small>km</small></div></div>
+    <div><div class="label">Charge</div><span class="state" style="--c:var(${color})">${esc(label)}</span>${extra ? `<div class="sub">${esc(extra).replace("\n", "<br>")}</div>` : ""}</div>
+    <div><div class="label">Compteur</div><div class="n">${fr(c.mileage, 0)} <small>km</small></div></div>
+    ${est ? `<div class="estimate">⏱️ <b>Estimation</b> : dernière synchro à ${hm(est.from)} (${fr(est.from_level, 0)} %). Niveau calculé à
+      ${fr(est.rate, 1)} %/h (${esc(est.source)}) ; recalé à la prochaine synchro (réveil ou fin de charge).</div>` : ""}`;
 }
 
 function renderKpis() {
@@ -507,3 +531,5 @@ systemDark.addEventListener("change", () => { renderThemeButton(); if (data) { r
 renderThemeButton();
 load();
 setInterval(load, 5 * 60 * 1000);
+// estimation de la charge en cours : recalculée chaque minute, sans requête
+setInterval(() => { if (data?.charge_estimate) renderCar(); }, 60 * 1000);
