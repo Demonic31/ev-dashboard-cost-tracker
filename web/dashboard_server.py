@@ -21,6 +21,7 @@ import io
 import json
 import logging
 import os
+import re
 import secrets
 import shutil
 import sqlite3
@@ -295,12 +296,81 @@ class ChargeCurves:
                             points.append([self.iso(stop), end_level, None])
                         sid = "C-" + datetime.fromisoformat(start).astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                         curves[sid] = points
+                    ongoing = self.ongoing(conn, vin)
                 finally:
                     conn.close()
-            return {"curves": curves}
+            rate, count = self.median_rate(charges)
+            return {"curves": curves, "ongoing": ongoing, "median_rate": rate, "median_count": count}
         except (OSError, sqlite3.Error, requests.RequestException, ValueError, StopIteration) as exc:
             log.warning("courbes de charge indisponibles : %s", exc)
             return {"error": str(exc) or type(exc).__name__}
+
+
+    def ongoing(self, conn, vin):
+        """Points de la charge en cours (ligne de battery sans stop_at), début de charge compris."""
+        row = conn.execute("SELECT start_at, start_level FROM battery WHERE VIN=? AND stop_at IS NULL "
+                           "ORDER BY start_at DESC LIMIT 1", (vin,)).fetchone()
+        if not row:
+            return None
+        start, start_level = row
+        points = [[self.iso(d), lvl] for d, lvl in conn.execute(
+            "SELECT date, level FROM battery_curve WHERE VIN=? AND start_at=? ORDER BY date", (vin, start)).fetchall()
+            if lvl is not None]
+        if start_level is not None and (not points or points[0][0] > self.iso(start)):
+            points.insert(0, [self.iso(start), start_level])
+        return {"start_at": self.iso(start), "points": points}
+
+    @staticmethod
+    def median_rate(charges, count=10):
+        """Vitesse de charge médiane (% par heure) des dernières recharges terminées d'au moins 30 min, et le nombre
+        de recharges retenues."""
+        rates = []
+        for start, stop, start_level, end_level in sorted(charges)[-count:]:
+            hours = (datetime.fromisoformat(stop) - datetime.fromisoformat(start)).total_seconds() / 3600
+            if start_level is not None and end_level is not None and hours >= 0.5 and end_level > start_level:
+                rates.append((end_level - start_level) / hours)
+        rates.sort()
+        return (rates[len(rates) // 2] if rates else None), len(rates)
+
+
+def iso_hours(duration):
+    """Durée ISO 8601 de l'API Stellantis (« PT2H25M ») en heures, None si absente ou illisible."""
+    m = re.fullmatch(r"P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?", duration or "")
+    if not m or not any(m.groups()):
+        return None
+    d, h, mi, sec = (float(g or 0) for g in m.groups())
+    return 24 * d + h + mi / 60 + sec / 3600
+
+
+def charge_estimate(car, curves):
+    """Base de l'estimation d'une charge en cours, extrapolée dans la page (la voiture n'envoie son état qu'au
+    début, vers +45 min, à la fin et aux réveils) : dernier relevé et vitesse de charge en % par heure.
+
+    Vitesse : mesurée dans la charge en cours (deux relevés à 1 h d'écart au moins), sinon médiane des dernières
+    recharges, sinon déduite du temps restant annoncé par la voiture (souvent optimiste)."""
+    if car.get("error") or car.get("status") != "InProgress" or car.get("level") is None or not car.get("updated_at"):
+        return None
+    at, level = datetime.fromisoformat(car["updated_at"]), float(car["level"])
+    car_hours = iso_hours(car.get("remaining_time"))
+    rate, source = None, None
+    points = ((curves or {}).get("ongoing") or {}).get("points") or []
+    if len(points) >= 2:
+        (t_a, l_a), (t_b, l_b) = points[0], points[-1]
+        hours = (datetime.fromisoformat(t_b) - datetime.fromisoformat(t_a)).total_seconds() / 3600
+        if hours >= 1 and l_b > l_a:
+            rate, source = (l_b - l_a) / hours, f"mesuré sur la charge en cours, {len(points)} relevés"
+    if rate is None and (curves or {}).get("median_rate"):
+        count = curves.get("median_count") or 0
+        rate = curves["median_rate"]
+        source = f"médiane des {count} dernières recharges" if count > 1 else "dernière recharge"
+    if rate is None and car_hours and level < 100:
+        rate, source = (100 - level) / car_hours, "d'après le temps restant annoncé par la voiture"
+    if not rate:
+        return None
+    return {"from_at": at.astimezone(timezone.utc).isoformat(timespec="seconds"), "from_level": level,
+            "from_autonomy": car.get("autonomy"), "rate": round(rate, 3), "source": source, "target": 100,
+            "car_end_at": (at + timedelta(hours=car_hours)).astimezone(timezone.utc).isoformat(timespec="seconds")
+            if car_hours else None}
 
 
 class FuelPrice:
@@ -686,9 +756,10 @@ def make_handler(mirror, season, fuel, history, offers, battery_kwh, health, car
                 try:
                     force = "refresh=1" in self.path
                     sheet = mirror.get(force=force)
+                    car_state, charge_curves = car.get(force=force), curves.get(force=force)
                     data = dict(sheet, season=season.get(force=force), battery_kwh=battery_kwh,
-                                health=health.get(force=force), car=car.get(force=force),
-                                charge_curves=curves.get(force=force),
+                                health=health.get(force=force), car=car_state, charge_curves=charge_curves,
+                                charge_estimate=charge_estimate(car_state, charge_curves),
                                 offers=dict(offers, fuel=fuel.get() if offers["petrol_l_100km"] else None),
                                 # prix du carburant le jour de chaque recharge (équivalent essence)
                                 fuel_history=history.get({str(r[1])[:10] for r in sheet["charges"]["rows"]})
