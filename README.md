@@ -239,3 +239,15 @@ Les données déjà enregistrées sont conservées ; rien à faire côté synchr
 * La clé Google est montée en *secret* Docker en lecture seule ; la synchro tourne en utilisateur non root et monte la config psacc en lecture seule.
 * Le front (port 8080) n'est publié que sur l'IP locale, comme psacc ; pour un accès depuis Internet, il passe par un reverse proxy (Caddy intégré ou Synology) et la mire de connexion. Sans mot de passe configuré, les requêtes venant d'Internet sont refusées.
 * Le port 5000 n'est publié que sur l'IP locale : ne pas l'exposer sur Internet (l'interface permet de piloter la voiture).
+
+## 🙏 Solutions utilisées
+
+| Solution | Rôle dans le projet |
+| :--- | :--- |
+| [psa_car_controller](https://github.com/flobz/psa_car_controller) (flobz) | Connexion au compte MyPeugeot, relevé des charges, trajets et courbes de charge |
+| [Caddy](https://github.com/caddyserver/caddy) | Reverse proxy intégré, HTTPS Let's Encrypt automatique |
+| [Chart.js](https://github.com/chartjs/Chart.js) | Graphiques du dashboard (v4.4.1, licence MIT : [`web/static/vendor/LICENSE-chartjs.md`](web/static/vendor/LICENSE-chartjs.md)) |
+| [segno](https://github.com/heuer/segno) | QR code d'enrôlement TOTP |
+| [requests](https://github.com/psf/requests) · [google-auth](https://github.com/googleapis/google-auth-library-python) | Appels HTTP et accès à l'API Google Sheets |
+| [api-couleur-tempo.fr](https://www.api-couleur-tempo.fr/) | Couleurs des jours Tempo |
+| [Prix des carburants](https://www.prix-carburants.gouv.fr/rubrique/opendata/) (données officielles) | Prix du jour et archives pour l'équivalent essence |
