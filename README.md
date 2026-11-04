@@ -251,3 +251,7 @@ Les données déjà enregistrées sont conservées ; rien à faire côté synchr
 | [requests](https://github.com/psf/requests) · [google-auth](https://github.com/googleapis/google-auth-library-python) | Appels HTTP et accès à l'API Google Sheets |
 | [api-couleur-tempo.fr](https://www.api-couleur-tempo.fr/) | Couleurs des jours Tempo |
 | [Prix des carburants](https://www.prix-carburants.gouv.fr/rubrique/opendata/) (données officielles) | Prix du jour et archives pour l'équivalent essence |
+
+## 📄 Licence
+
+[MIT](LICENSE) © 2026 Demonic31. Les composants tiers gardent leur propre licence (voir « Solutions utilisées » ; Chart.js : [`web/static/vendor/LICENSE-chartjs.md`](web/static/vendor/LICENSE-chartjs.md)).
