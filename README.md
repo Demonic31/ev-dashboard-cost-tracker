@@ -1,4 +1,4 @@
-# e208-cost-tracker : suivi des recharges d'une e-208 et coût EDF Tempo
+# ev-dashboard-cost-tracker : suivi des recharges d'une e-208 et coût EDF Tempo
 
 Enregistre automatiquement chaque recharge et chaque trajet d'une **Peugeot e-208** avec [psa_car_controller](https://github.com/flobz/psa_car_controller) (psacc), puis les pousse toutes les heures dans un **Google Sheet** qui calcule le coût réel en **EDF Tempo** et le coût aux 100 km.
 
@@ -52,7 +52,7 @@ Puis **partager le Sheet** avec l'adresse `client_email` du JSON (`psacc-sheets-
 ## 🚀 Installation
 
 ```bash
-git clone git@github.com:Demonic31/e208-cost-tracker.git && cd e208-cost-tracker
+git clone git@github.com:Demonic31/ev-dashboard-cost-tracker.git && cd ev-dashboard-cost-tracker
 cp .env.example .env          # LAN_IP, SPREADSHEET_ID, prix du comparatif…
 mkdir -p psacc/config secrets && chmod 700 secrets
 docker compose up -d psacc
