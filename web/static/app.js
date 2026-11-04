@@ -146,9 +146,12 @@ function renderCar() {
       ${fr(est.rate, 1)} %/h (${esc(est.source)}) ; recalé à la prochaine synchro (réveil ou fin de charge).</div>` : ""}`;
 }
 
+// Ordre d'affichage des tuiles (indices des colonnes du Dashboard) : coût, énergie, consommation, distance
+const KPI_ORDER = [0, 3, 1, 5, 4, 8, 2, 7, 6];
+
 function renderKpis() {
-  const cards = data.kpi.map((k, i) =>
-    `<div class="card kpi${i === 0 || i === 3 ? " main" : ""}"><div class="label">${esc(k.label)}</div>
+  const cards = KPI_ORDER.filter(i => i < data.kpi.length).map(i =>
+    `<div class="card kpi${i === 0 || i === 3 ? " main" : ""}"><div class="label">${esc(data.kpi[i].label)}</div>
      <div class="value">${(KPI_FMT[i] || (v => esc(v)))(view.kpi[i])}</div></div>`);
   document.getElementById("kpis").innerHTML = cards.join("");
 }
