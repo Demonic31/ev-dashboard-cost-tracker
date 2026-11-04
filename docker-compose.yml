@@ -65,6 +65,8 @@ services:
     volumes:
       # Base psacc en lecture seule, copiée avant lecture (courbes de charge)
       - ./psacc/config:/config:ro
+      # Prix passés du carburant (équivalent essence des recharges), gardés entre deux redémarrages
+      - dashboard-data:/data
     ports:
       # Lié à l'IP LAN uniquement (pas 0.0.0.0)
       - "${LAN_IP:?LAN_IP manquant dans .env}:${DASHBOARD_PORT:-8080}:8080"
@@ -74,3 +76,6 @@ services:
 secrets:
   google-sa:
     file: ./secrets/google-sa.json
+
+volumes:
+  dashboard-data:

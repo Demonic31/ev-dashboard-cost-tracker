@@ -6,7 +6,8 @@ Sert une page HTML et un endpoint /api/data qui renvoie, en JSON, les valeurs ca
 miroir du Sheet, rafraîchi au plus toutes les CACHE_SECONDS.
 
 En complément : la saison Tempo en cours (api-couleur-tempo.fr, comme la synchro) et les paramètres du comparatif
-des offres (prix des autres options EDF, prix moyen du carburant sur data.economie.gouv.fr).
+des offres (prix des autres options EDF, prix moyen du carburant sur data.economie.gouv.fr) et, pour l'équivalent
+essence de chaque recharge, le prix moyen du carburant le jour de la recharge (archives journalières officielles).
 
 Mire de connexion facultative : un mot de passe unique dont l'empreinte (scrypt) est fournie au conteneur
 (DASHBOARD_PASSWORD_HASH, générée avec --hash-password), complété si besoin d'un code TOTP à 6 chiffres
@@ -16,6 +17,7 @@ import base64
 import getpass
 import hashlib
 import hmac
+import io
 import json
 import logging
 import os
@@ -26,6 +28,8 @@ import sys
 import tempfile
 import threading
 import time
+import xml.etree.ElementTree as ET
+import zipfile
 from datetime import date, datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -194,6 +198,9 @@ class TempoSeason:
 
 FUEL_API = ("https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/"
             "prix-des-carburants-en-france-flux-instantane-v2/records")
+# Archives journalières officielles du site prix-carburants.gouv.fr (zip d'un XML, ~1 Mo) : prix du jour J
+FUEL_ARCHIVE = "https://donnees.roulez-eco.fr/opendata/jour/{:%Y%m%d}"
+FUEL_NAMES = {"sp98": "SP98", "sp95": "SP95", "e10": "E10", "e85": "E85", "gazole": "Gazole", "gplc": "GPLc"}
 
 
 class Psacc:
@@ -305,7 +312,7 @@ class FuelPrice:
         self.fuel, self.departement, self.days = fuel.lower(), departement, days
         self.http = requests.Session()
 
-    @cached(7 * 24 * 3600)  # une relève par semaine
+    @cached(24 * 3600)  # une relève par jour
     def get(self):
         where = f"{self.fuel}_maj >= now(days=-{self.days})"
         if self.departement:
@@ -324,6 +331,99 @@ class FuelPrice:
         except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
             log.warning("prix carburant indisponible : %s", exc)
             return {"error": str(exc)}
+
+
+class FuelHistory:
+    """Prix moyen d'un carburant à une date passée, pour l'équivalent essence de chaque recharge.
+
+    Même calcul que FuelPrice (moyenne des stations mises à jour les `days` derniers jours, France ou département),
+    appliqué à l'archive officielle du jour. Les jours manquants sont téléchargés en tâche de fond, un par un ;
+    les prix trouvés sont gardés dans DATA_DIR (volume Docker) pour ne pas être retéléchargés au redémarrage.
+    """
+
+    def __init__(self, fuel, departement, data_dir, days=3):
+        self.name, self.days = FUEL_NAMES.get(fuel.lower()), days
+        # le code postal commence par le numéro de département (Corse : 20 pour 2A et 2B)
+        self.cp = "20" if departement.upper() in ("2A", "2B") else departement
+        self.file = os.path.join(data_dir, f"fuel-{fuel.lower()}-{departement or 'fr'}.json") if data_dir else None
+        self.prices, self.pending, self.failed = {}, [], {}
+        self.lock, self.wake = threading.Lock(), threading.Event()
+        self.http = requests.Session()
+        if self.file and os.path.isfile(self.file):
+            try:
+                with open(self.file, encoding="utf-8") as f:
+                    self.prices = json.load(f)
+                log.info("historique %s : %d jour(s) en cache", self.name, len(self.prices))
+            except (OSError, ValueError) as exc:
+                log.warning("historique carburant illisible (%s) : repart de zéro", exc)
+        if self.name:
+            threading.Thread(target=self.worker, name="fuel-history", daemon=True).start()
+
+    def get(self, days):
+        """Prix connus pour ces jours (AAAA-MM-JJ) ; les jours passés manquants sont mis en file d'attente."""
+        if not self.name:
+            return {}
+        today = date.today().isoformat()
+        with self.lock:
+            missing = sorted(d for d in days if d < today and d not in self.prices and d not in self.pending
+                             and time.monotonic() - self.failed.get(d, -1e9) > 6 * 3600)
+            self.pending += missing
+        if missing:
+            self.wake.set()
+        return {d: self.prices[d] for d in days if d in self.prices}
+
+    def worker(self):
+        while True:
+            self.wake.wait()
+            self.wake.clear()
+            while True:
+                with self.lock:
+                    if not self.pending:
+                        break
+                    day = self.pending[-1]  # les plus récents d'abord
+                try:
+                    price = self.fetch(date.fromisoformat(day))
+                    with self.lock:
+                        self.prices[day] = price
+                    log.info("prix %s du %s : %.3f €/L (%d stations)",
+                             self.name, day, price["price"], price["stations"])
+                    self.save()
+                except (requests.RequestException, zipfile.BadZipFile, ET.ParseError, ValueError, OSError) as exc:
+                    log.warning("prix %s du %s indisponible : %s", self.name, day, exc)
+                    with self.lock:
+                        self.failed[day] = time.monotonic()  # nouvel essai dans 6 h
+                finally:
+                    with self.lock:
+                        self.pending.remove(day)
+                time.sleep(2)  # sans presse : un fichier toutes les deux secondes
+
+    def fetch(self, day):
+        resp = self.http.get(FUEL_ARCHIVE.format(day), timeout=60)
+        resp.raise_for_status()
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+            member = z.infolist()[0]
+            if member.file_size > 200 * 1024 * 1024:
+                raise ValueError("archive anormalement grosse")
+            root = ET.fromstring(z.read(member))
+        since = (day - timedelta(days=self.days - 1)).isoformat()
+        values = [float(p.get("valeur")) for pdv in root.iter("pdv") if pdv.get("cp", "").startswith(self.cp)
+                  for p in pdv.iter("prix") if p.get("nom") == self.name and (p.get("maj") or "")[:10] >= since]
+        if not values:
+            raise ValueError("aucun prix publié")
+        return {"price": round(sum(values) / len(values), 4), "stations": len(values)}
+
+    def save(self):
+        if not self.file:
+            return
+        try:
+            with self.lock:
+                body = json.dumps(self.prices, sort_keys=True)
+            tmp = self.file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(body)
+            os.replace(tmp, self.file)
+        except OSError as exc:
+            log.warning("historique carburant non enregistré : %s", exc)
 
 
 def env_price(name):
@@ -481,7 +581,7 @@ def login_page(message="", totp=False):
         .replace("{{totp}}", TOTP_FIELD if totp else "").encode()
 
 
-def make_handler(mirror, season, fuel, offers, battery_kwh, health, car, curves, gate):
+def make_handler(mirror, season, fuel, history, offers, battery_kwh, health, car, curves, gate):
     class Handler(BaseHTTPRequestHandler):
         server_version = "e208-dashboard"
 
@@ -585,10 +685,14 @@ def make_handler(mirror, season, fuel, offers, battery_kwh, health, car, curves,
             elif path == "/api/data":
                 try:
                     force = "refresh=1" in self.path
-                    data = dict(mirror.get(force=force), season=season.get(force=force), battery_kwh=battery_kwh,
+                    sheet = mirror.get(force=force)
+                    data = dict(sheet, season=season.get(force=force), battery_kwh=battery_kwh,
                                 health=health.get(force=force), car=car.get(force=force),
                                 charge_curves=curves.get(force=force),
                                 offers=dict(offers, fuel=fuel.get() if offers["petrol_l_100km"] else None),
+                                # prix du carburant le jour de chaque recharge (équivalent essence)
+                                fuel_history=history.get({str(r[1])[:10] for r in sheet["charges"]["rows"]})
+                                if offers["petrol_l_100km"] else {},
                                 auth=gate.required(addr))
                     self.send(200, json.dumps(data, ensure_ascii=False).encode(), "application/json; charset=utf-8",
                               self.renewed())
@@ -651,6 +755,8 @@ def main():
                          spreadsheet_id, int(os.environ.get("CACHE_SECONDS", "300")))
     season = TempoSeason(os.environ.get("TEMPO_API_URL", "https://www.api-couleur-tempo.fr/api"))
     fuel = FuelPrice(os.environ.get("PETROL_FUEL", "sp98"), os.environ.get("PETROL_DEPARTEMENT", "").strip())
+    history = FuelHistory(os.environ.get("PETROL_FUEL", "sp98"), os.environ.get("PETROL_DEPARTEMENT", "").strip(),
+                          os.environ.get("DATA_DIR", "").strip())
     offers = offers_config()
     psacc = Psacc(os.environ.get("PSACC_URL", "http://psacc:5000"), os.environ.get("VIN") or None)
     health, car = BatteryHealth(psacc), CarStatus(psacc)
@@ -664,7 +770,7 @@ def main():
         log.info("mire de connexion active%s (%s)", " avec code TOTP" if gate.totp_secret else "", scope)
     port = int(os.environ.get("PORT", "8080"))
     log.info("front e-208 sur le port %d (comparatif : %s)", port, json.dumps(offers))
-    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, offers, env_price("BATTERY_KWH"), health, car, curves, gate)).serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, history, offers, env_price("BATTERY_KWH"), health, car, curves, gate)).serve_forever()
 
 
 if __name__ == "__main__":

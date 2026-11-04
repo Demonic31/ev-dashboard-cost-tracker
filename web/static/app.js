@@ -192,7 +192,7 @@ function renderOffers() {
   }).join("") + `<ul class="notes">
     <li>Coût de l'énergie seule (kWh facturés = kWh batterie × ${fr(coef, 2)}), abonnements non compris.</li>
     <li>Heures creuses et Zen supposent les mêmes heures creuses que Tempo (${hcLabel}, onglet Paramètres) ; Zen est réparti au prorata du temps de charge.</li>
-    <li>Essence : ${fr(km, 0)} km parcourus sur la période (${kmSource}) ; prix du carburant relu chaque semaine.</li></ul>`;
+    <li>Essence : ${fr(km, 0)} km parcourus sur la période (${kmSource}) ; prix du carburant relu chaque jour.</li></ul>`;
 }
 
 // ------------------------------------------------------------------ graphiques
@@ -363,6 +363,23 @@ function slotBar(parts) {
   return `<div class="bar">${parts.map((p, i) => p > 0 ? `<span style="width:${100 * p / total}%;background:${css(TRANCHE_COLORS[i])}" title="${TRANCHES[i]} : ${fr(p, 2)} kWh"></span>` : "").join("")}</div>`;
 }
 
+// Équivalent essence d'une recharge : km de la ligne (compteur) s'ils sont connus, sinon km que permet l'énergie chargée
+// (kWh batterie ÷ consommation moyenne des trajets) ; × L/100 km de la voiture thermique × prix moyen du carburant
+// le jour de la recharge (prix actuel à défaut)
+function petrolEq(r) {
+  const o = data.offers || {}, l100 = num(o.petrol_l_100km), fuel = o.fuel, trips = data.trips.rows;
+  const km = sum(trips.filter(t => num(t[T.kwh]) > 0), T.km), kwh100 = km ? 100 * sum(trips, T.kwh) / km : 0;
+  const kwhBat = num(r[C.kwhBat]), day = String(r[C.start]).slice(0, 10), hist = (data.fuel_history || {})[day];
+  const price = hist?.price ?? (fuel && !fuel.error ? fuel.price : 0);
+  const rowKm = num(r[C.km]), eqKm = rowKm > 0 ? rowKm : kwh100 && kwhBat ? 100 * kwhBat / kwh100 : 0;
+  if (!l100 || !eqKm || !price) return null;
+  return { cost: eqKm * l100 / 100 * price, km: eqKm, price, l100, fuel: fuel?.fuel || "essence",
+           kmHow: rowKm > 0 ? `${fr(eqKm, 0)} km parcourus` : `≈ ${fr(eqKm, 0)} km estimés (${fr(kwh100, 1)} kWh/100 km)`,
+           when: hist ? `du ${new Date(day).toLocaleDateString("fr-FR")}` : "actuel" };
+}
+const petrolCell = eq => eq ? `<small class="petrol" title="${esc(`${eq.kmHow} × ` +
+  `${fr(eq.l100, 1)} L/100 km × ${fr(eq.price, 3)} €/L (prix moyen ${eq.fuel} ${eq.when})`)}">≈ ${eur(eq.cost)} en ${esc(eq.fuel)}</small>` : "";
+
 // Dépliage des mois : les lignes data-in du mois, et pour les recharges la courbe si elle était ouverte
 function bindMonths(el, open) {
   el.querySelectorAll("tr.month-row").forEach(tr => {
@@ -393,13 +410,15 @@ function renderTable() {
         const cost = sum(list, C.cost), kwh = sum(list, C.kwh), km = sum(list, C.km);
         const eur100 = ratio(sum(list.filter(r => num(r[C.km]) > 0), C.cost), km, 100), eurKwh = ratio(cost, kwh);
         const slots = TRANCHES.map((_, i) => sum(list, C.slots + i));
+        const eqs = list.map(petrolEq), petrol = eqs.some(Boolean) ? { ...eqs.find(Boolean),
+          cost: eqs.reduce((t, e) => t + (e?.cost || 0), 0), km: eqs.reduce((t, e) => t + (e?.km || 0), 0) } : null;
         return monthHead(m, "Afficher les recharges du mois") + `<td><small>${list.length} recharge${list.length > 1 ? "s" : ""}</small></td><td></td>
-          <td>${fr(sum(list, C.kwhBat), 1)}</td><td></td><td class="text">${slotBar(slots)}</td><td>${fr(kwh, 1)}</td><td>${eur(cost)}</td>
+          <td>${fr(sum(list, C.kwhBat), 1)}</td><td></td><td class="text">${slotBar(slots)}</td><td>${fr(kwh, 1)}</td><td>${eur(cost)}${petrol ? `<small class="petrol" title="Total des équivalents essence du mois">≈ ${eur(petrol.cost)} en ${esc(petrol.fuel)}</small>` : ""}</td>
           <td>${eurKwh === "" ? "–" : eur(eurKwh, 4)}</td><td>${fr(km, 0)}</td><td>${eur100 === "" ? "–" : eur(eur100)}</td><td></td></tr>` +
         list.map(r => `<tr class="fold" data-in="${m}" data-id="${esc(r[0])}" aria-expanded="false" title="Afficher la courbe de charge" hidden>
           <td><span class="chev">▸</span> ${dt(r[C.start])}</td><td>${fr(r[C.duration], 1)} h</td><td>${fr(r[3], 0)} → ${fr(r[4], 0)} %</td>
           <td>${fr(r[C.kwhBat], 1)}${data.battery_kwh && num(r[C.kwhBat]) ? ` <small>(${fr(100 * num(r[C.kwhBat]) / data.battery_kwh, 0)} %)</small>` : ""}</td><td class="text">${r[C.color] ? `<span class="pill ${esc(r[C.color])}">${esc(r[C.color])}</span>` : "–"}</td>
-          <td class="text">${slotBar(r.slice(C.slots, C.slots + 6).map(Number))}</td><td>${fr(r[C.kwh], 1)}</td><td>${eur(r[C.cost])}</td>
+          <td class="text">${slotBar(r.slice(C.slots, C.slots + 6).map(Number))}</td><td>${fr(r[C.kwh], 1)}</td><td>${eur(r[C.cost])}${petrolCell(petrolEq(r))}</td>
           <td>${eur(r[C.eurKwh], 4)}</td><td>${fr(r[C.km], 0)}</td><td>${eur(r[C.eur100])}</td><td class="note">${esc(r[C.note])}</td></tr>
           <tr class="curve-row" hidden><td colspan="12"></td></tr>`).join("");
       }).join("")}</tbody></table>`;
