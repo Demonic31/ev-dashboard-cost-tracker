@@ -15,7 +15,7 @@ Enregistre automatiquement chaque recharge et chaque trajet d'un **véhicule él
 
 Testé avec une Peugeot e-208. **Ajouter une marque** : créer `brands/<marque>/` avec
 * `docker-compose.yml` : ses services (relevé, synchro qui écrit le Sheet au format commun), inclus par le compose racine ; les chemins relatifs partent de ce dossier ;
-* `source.py` : `create(env)` renvoie une `VehicleSource` (contrat dans [`web/vehicle_source.py`](web/vehicle_source.py) : nom, état de la voiture, SOH, courbes de charge ; une donnée non fournie est masquée) ;
+* `source.py` : `create(env)` renvoie une `VehicleSource` (contrat dans [`web/vehicle_source.py`](web/vehicle_source.py) : nom, état de la voiture, SOH, courbes de charge, source citée dans « Sources et crédits » ; une donnée non fournie est masquée) ;
 * `README.md` : prérequis, installation, variables.
 
 ## 📸 Aperçu
@@ -136,6 +136,7 @@ Puis ouvrir `http://<LAN_IP>:8080`. La page affiche ce que le Sheet a calculé, 
   * **Heures creuses** : la part HC/HP de chaque charge, tirée des colonnes `H:M`, avec les mêmes heures creuses que Tempo (onglet `Paramètres`) ;
   * **Zen Week-End + HC** : prix bas le week-end, les jours fériés et en heures creuses en semaine, au prorata du temps de charge ;
   * **Essence / Diesel** : une ligne par carburant de `PETROL_FUELS` (ou `PETROL_FUEL`) ; km parcourus (le plus grand entre les trajets enregistrés et le compteur entre recharges) × consommation du carburant × son prix moyen. Ce prix est la moyenne des stations mises à jour ces 3 derniers jours, en France ou dans un département, d'après les [données officielles prix-carburants](https://data.economie.gouv.fr/explore/dataset/prix-des-carburants-en-france-flux-instantane-v2/), relues une fois par jour (et au redémarrage du conteneur ; le bouton 🔄 « Actualiser » ne les relit pas).
+* **Pied de page** : version installée (avec le libellé PREPROD en PREPROD) ; un clic ouvre le panneau **Nouveautés**, résumé de chaque version tiré de [`CHANGELOG.md`](CHANGELOG.md), avec un lien vers chaque note de version GitHub. Puis auteur, licence MIT et lien vers le code source, puis un lien **Sources et crédits**. Ce panneau liste les sources des données, chacune en lien avec ce qu'elle fournit et la date de sa dernière lecture : celle de la marque (psa_car_controller pour Stellantis), le Google Sheet, [api-couleur-tempo.fr](https://www.api-couleur-tempo.fr) et [prix-carburants.gouv.fr](https://www.prix-carburants.gouv.fr/rubrique/opendata/) ; puis les bibliothèques (Chart.js) et le projet. Les panneaux se ferment avec ✕, Échap ou le bouton retour du téléphone. La version vient de [`web/VERSION`](web/VERSION) ; à chaque release, mettre à jour ce fichier et ajouter la version en tête de `CHANGELOG.md`.
 
 Le serveur relit le Sheet au plus toutes les `DASHBOARD_CACHE_SECONDS`. Le bouton 🔄 (Actualiser) force la relecture. Le compte de service n'y a qu'un accès en lecture.
 
@@ -219,7 +220,7 @@ docker compose up -d --build --remove-orphans
 docker compose --profile proxy pull caddy && docker compose --profile proxy up -d caddy
 ```
 
-`--remove-orphans` retire les conteneurs d'un service renommé (p. ex. `e208-dashboard`, devenu `ev-dashboard` en 0.9.0). Mise à jour des outils de la marque : voir son README (psacc : [mise à jour](brands/stellantis/README.md#-mise-à-jour-de-psacc)).
+La version installée s'affiche en bas du dashboard. `--remove-orphans` retire les conteneurs d'un service renommé (p. ex. `e208-dashboard`, devenu `ev-dashboard` en 0.9.0). Mise à jour des outils de la marque : voir son README (psacc : [mise à jour](brands/stellantis/README.md#-mise-à-jour-de-psacc)).
 
 ## 💾 Sauvegarde
 

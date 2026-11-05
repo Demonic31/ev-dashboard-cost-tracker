@@ -58,6 +58,43 @@ STATIC_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; char
 # Libellé ajouté au nom de l'app installée (PWA), ex. « PREPROD » : icônes et logo de la mire marqués « TEST » ;
 # vide en PROD
 APP_LABEL = os.environ.get("APP_LABEL", "").strip()
+
+
+def read_version():
+    """Version de l'application (web/VERSION, mis à jour à chaque release), affichée dans le pied de page."""
+    try:
+        with open(os.path.join(APP_DIR, "VERSION"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+APP_VERSION = read_version()
+
+
+def read_changelog():
+    """Journal des versions (CHANGELOG.md, à côté du script dans l'image, à la racine du dépôt sinon) :
+    [{"version", "date", "items": [puces en Markdown simple]}], de la plus récente à la plus ancienne."""
+    for path in (os.path.join(APP_DIR, "CHANGELOG.md"), os.path.join(APP_DIR, "..", "CHANGELOG.md")):
+        try:
+            with open(path, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+            break
+        except OSError:
+            continue
+    else:
+        return []
+    versions = []
+    for line in lines:
+        if line.startswith("## "):
+            version, _, day = line[3:].partition(" — ")
+            versions.append({"version": version.strip(), "date": day.strip(), "items": []})
+        elif line.startswith("- ") and versions:
+            versions[-1]["items"].append(line[2:].strip())
+    return versions
+
+
+CHANGELOG = read_changelog()
 # Logo personnel facultatif (ex. celui de la marque), à déposer dans local/ (non versionné, monté en lecture seule)
 LOCAL_DIR = os.environ.get("LOCAL_DIR", "/local")
 LOGO_TYPES = {".svg": "image/svg+xml", ".png": "image/png"}
@@ -182,6 +219,7 @@ class TempoSeason:
             days.raise_for_status()
             log.info("saison Tempo %s relue", periode)
             return {"periode": periode, "stats": stats.json(),
+                    "fetched_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                     "days": [{"day": d["dateJour"], "color": COLORS.get(d.get("codeJour"))} for d in days.json()]}
         except (requests.RequestException, ValueError, KeyError) as exc:
             log.warning("API Tempo indisponible : %s", exc)
@@ -759,12 +797,17 @@ def make_handler(mirror, season, fuel_prices, fuels, history, offers, battery_kw
                                 # prix de chaque carburant le jour de chaque recharge (équivalent carburant)
                                 fuel_history=history.get({str(r[1])[:10] for r in sheet["charges"]["rows"]})
                                 if any(f["l100"] for f in fuels) else {},
+                                # pied de page : version, libellé PREPROD et source des données de la marque
+                                app={"version": APP_VERSION, "label": APP_LABEL}, credit=source.credit(),
                                 auth=gate.required(addr, self.headers))
                     self.send(200, json.dumps(data, ensure_ascii=False).encode(), "application/json; charset=utf-8",
                               self.renewed())
                 except Exception as exc:  # pylint: disable=broad-except
                     log.exception("lecture du Sheet impossible")
                     self.send(502, json.dumps({"error": str(exc)}).encode(), "application/json")
+            elif path == "/api/changelog":
+                self.send(200, json.dumps(CHANGELOG, ensure_ascii=False).encode(), "application/json; charset=utf-8",
+                          self.renewed())
             elif path == "/healthz":
                 self.send(200, b"ok", "text/plain")
             else:
@@ -843,7 +886,7 @@ def main():
             else f"requêtes venant du proxy {gate.trusted_proxy}"
         log.info("mire de connexion active%s (%s)", " avec code TOTP" if gate.totp_secret else "", scope)
     port = int(os.environ.get("PORT", "8080"))
-    log.info("dashboard VE sur le port %d (comparatif : %s ; carburants : %s)", port, json.dumps(offers),
+    log.info("dashboard VE %s sur le port %d (comparatif : %s ; carburants : %s)", APP_VERSION or "(version inconnue)", port, json.dumps(offers),
              ", ".join(f"{f['name']} {f['l100']} L/100 km" for f in fuels))
     ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel_prices, fuels, history, offers, env_price("BATTERY_KWH"), source,
                                                          os.environ.get("VEHICLE_NAME", "").strip(), gate,

@@ -3,3 +3,4 @@
 *
 !web/
 !brands/*/source.py
+!CHANGELOG.md

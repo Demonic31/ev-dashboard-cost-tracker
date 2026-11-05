@@ -56,6 +56,11 @@ class VehicleSource:
         """Santé de la batterie : {"soh" (%), "fetched_at", "note" (origine de l'indicateur, affichée)}."""
         return None
 
+    def credit(self):
+        """Source des données citée dans « Sources et crédits » : {"group" (marque ou groupe, ex. « Stellantis »),
+        "name", "url", "provides" (ce qu'elle fournit)}."""
+        return None
+
     def curves(self, force=False):
         """Courbes de charge : {"curves": {ID de recharge du Sheet: [[ISO, niveau, autonomie], ...]},
         "ongoing": {"start_at", "points": [[ISO, niveau], ...]} ou None, "median_rate" (%/h des dernières recharges)
