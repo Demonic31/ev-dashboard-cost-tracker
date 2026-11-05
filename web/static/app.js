@@ -273,8 +273,11 @@ function renderLastCharge() {
   el.innerHTML = `<button type="button" class="lc-summary" aria-expanded="${lastChargeOpen}"><span class="lc-head"><span class="chev">▸</span>
     <b>🔌 Dernière recharge</b> <span class="when">${when}</span></span><span class="lc-stats"><span>${hDuration(num(r[C.duration]))}</span>
     <span>${fr(r[3], 0)} → ${fr(r[4], 0)} %</span><span>${fr(r[C.kwhBat], 1)} kWh</span><b class="cost">${eur(r[C.cost])}</b></span></button>
+    ${lastChargeOpen ? "" : `<div class="lc-bar"><span>HC/HP</span>${slotBar(r.slice(C.slots, C.slots + 6).map(Number))}</div>`}
     <div class="items"${lastChargeOpen ? "" : " hidden"}>${lastChargeItems(r)}</div>`;
-  el.querySelector(".lc-summary").addEventListener("click", () => { lastChargeOpen = !lastChargeOpen; renderLastCharge(); });
+  const toggle = () => { lastChargeOpen = !lastChargeOpen; renderLastCharge(); };
+  el.querySelector(".lc-summary").addEventListener("click", toggle);
+  el.querySelector(".lc-bar")?.addEventListener("click", toggle);
 }
 
 // Ordre d'affichage des tuiles (indices des colonnes du Dashboard) : coût, énergie, consommation, distance
