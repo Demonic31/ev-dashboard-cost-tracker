@@ -44,7 +44,12 @@
   h2 small { color: var(--muted); font-weight: 400; font-size: .8rem; margin-left: 6px; }
   td small { color: var(--muted); font-size: .8em; }
   td small.petrol { display: block; color: var(--petrol); white-space: nowrap; cursor: help; }
-  .car .sub.fuels small.petrol { display: block; }
+  /* Prix au kWh · équivalents carburant alignés en colonne ; sous le prix si la colonne est trop étroite */
+  .car.last .items > div { container-type: inline-size; }
+  .car .lc-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 4px; }
+  .car .lc-price .fuels small.petrol { display: block; }
+  @container (max-width: 250px) { .car .lc-price { flex-direction: column; } .car .lc-price .dot { display: none; }
+    .car .lc-price .fuels { padding-left: 1.2em; } }
   .car .sub small.petrol { color: var(--petrol); font-size: inherit; white-space: nowrap; cursor: help; }
   small.petrol.diesel, .car .sub small.petrol.diesel { color: var(--diesel); }
   .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 12px; align-items: center; }
