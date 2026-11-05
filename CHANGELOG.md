@@ -4,6 +4,9 @@ Résumé de chaque version, affiché dans le dashboard (clic sur le numéro de v
 
 Format : un titre `## <version> — <AAAA-MM-JJ>` par version, puis des puces `- ` d'une ligne (`**gras**` et `` `code` `` acceptés).
 
+## 0.12.2 — 2026-11-05
+- **Dernière recharge repliée sur téléphone** : toujours sur deux lignes, la durée en tête de la 2ᵉ ligne.
+
 ## 0.12.1 — 2026-11-05
 - **Pied de page** : « Made with ❤️ » au lieu de 💖.
 
