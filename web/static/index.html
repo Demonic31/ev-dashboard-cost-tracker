@@ -80,6 +80,19 @@
   .car .estimate { grid-column: 1 / -1; font-size: .8rem; color: var(--muted); padding: 8px 10px; border-radius: 8px;
     border: 1px dashed var(--border); background: color-mix(in srgb, var(--accent) 6%, transparent); }
   .car .estimate b { color: var(--text); }
+  /* Dernière recharge (#27) : ligne de résumé, détail dépliable sous le bloc Voiture */
+  .car.last { padding-top: 10px; padding-bottom: 10px; }
+  .car.last .n { font-size: 1.15rem; }
+  .car .n.cost { color: var(--accent); }
+  .car .slots { grid-column: 1 / -1; }
+  .car .slots .bar { margin-top: 4px; }
+  .car.last .items:not([hidden]) { margin-top: 12px; }
+  .lc-summary { all: unset; box-sizing: border-box; width: 100%; cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline;
+    gap: 4px 14px; font-size: .92rem; color: var(--muted); }
+  .lc-summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+  .lc-summary b { color: var(--text); } .lc-summary .cost { color: var(--accent); margin-left: auto; }
+  .lc-summary .chev { display: inline-block; transition: transform .15s; }
+  .lc-summary[aria-expanded="true"] .chev { transform: rotate(90deg); }
   /* 9 tuiles : 2 colonnes sur mobile (la dernière sur toute la largeur), 3 × 3 au-delà */
   .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
   @media (max-width: 640px) {
@@ -177,6 +190,8 @@
     <h2>🚗 Voiture <small id="carAt"></small></h2>
     <div class="items" id="carItems"></div>
   </section>
+
+  <section class="card car last" id="lastCharge" hidden></section>
 
   <section class="card period">
     <label for="preset">Période</label>
