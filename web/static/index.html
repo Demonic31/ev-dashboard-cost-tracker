@@ -15,20 +15,20 @@
 <style>
   :root {
     --bg: #f4f6f9; --card: #ffffff; --text: #1d2430; --muted: #6b7585; --border: #e3e7ee;
-    --accent: #0f766e; --bleu: #2563eb; --bleu-hc: #1e40af; --blanc: #94a3b8; --blanc-hc: #64748b;
+    --accent: #0f766e; --bleu: #2563eb; --bleu-hc: #1e40af; --blanc: #94a3b8; --blanc-hc: #64748b; --blanc-txt: #475569;
     --rouge: #dc2626; --rouge-hc: #991b1b; --base: #a8a29e; --petrol: #b45309; --diesel: #7c3aed; --good: #15803d; --bad: #b91c1c; --lvl-l: 40%;
     --shadow: 0 1px 3px rgba(15, 23, 42, .08); --logo: none; color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #0f141b; --card: #171e28; --text: #e6ebf2; --muted: #8a96a8; --border: #263040;
-      --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --diesel: #a78bfa; --good: #4ade80; --bad: #f87171; --lvl-l: 60%;
+      --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --blanc-txt: #cbd5e1; --base: #78716c; --petrol: #f59e0b; --diesel: #a78bfa; --good: #4ade80; --bad: #f87171; --lvl-l: 60%;
       --shadow: none; --logo: invert(1); color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
     --bg: #0f141b; --card: #171e28; --text: #e6ebf2; --muted: #8a96a8; --border: #263040;
-    --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --diesel: #a78bfa; --good: #4ade80; --bad: #f87171; --lvl-l: 60%;
+    --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --blanc-txt: #cbd5e1; --base: #78716c; --petrol: #f59e0b; --diesel: #a78bfa; --good: #4ade80; --bad: #f87171; --lvl-l: 60%;
     --shadow: none; --logo: invert(1); color-scheme: dark;
   }
   * { box-sizing: border-box; }
@@ -104,6 +104,7 @@
   /* Replié (#48) : barre HC/HP sous le résumé, alignée sur le texte après le chevron */
   .lc-bar { margin-top: 8px; padding-left: 1.3em; cursor: pointer; display: flex; align-items: center; gap: 8px; }
   .lc-bar > span { font-size: .78rem; color: var(--muted); } .lc-bar .bar { flex: 1; }
+  .lc-hp { font-size: .78rem; font-weight: 600; white-space: nowrap; }
   /* PC : une seule ligne ; téléphone : en-tête puis, sur la 2e ligne, durée · niveau · kWh · coût */
   .lc-head, .lc-stats { display: contents; }
   @media (max-width: 640px) {
