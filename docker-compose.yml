@@ -27,6 +27,7 @@ services:
       BRAND: ${BRAND:-stellantis}
       VIN: ${VIN:-}
       PETROL_FUEL: ${PETROL_FUEL:-sp98}
+      PETROL_FUELS: ${PETROL_FUELS:-}
       PETROL_DEPARTEMENT: ${PETROL_DEPARTEMENT:-}
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/google-sa
       # Mire de connexion (accès distant via le reverse proxy Synology) ; vide = pas de mire
