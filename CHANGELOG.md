@@ -4,6 +4,9 @@ Résumé de chaque version, affiché dans le dashboard (clic sur le numéro de v
 
 Format : un titre `## <version> — <AAAA-MM-JJ>` par version, puis des puces `- ` d'une ligne (`**gras**` et `` `code` `` acceptés).
 
+## 0.14.1 — 2026-11-05
+- **Documentation** : captures d'écran du README à jour, et outil versionné pour les régénérer avec des données fictives.
+
 ## 0.14.0 — 2026-11-05
 - **Dernière recharge repliée** : « dont X % en HP » à droite de la barre quand la recharge a débordé en heures pleines, dans la couleur du jour ; détail des kWh en info-bulle.
 
