@@ -4,6 +4,9 @@ Résumé de chaque version, affiché dans le dashboard (clic sur le numéro de v
 
 Format : un titre `## <version> — <AAAA-MM-JJ>` par version, puis des puces `- ` d'une ligne (`**gras**` et `` `code` `` acceptés).
 
+## 0.12.1 — 2026-11-05
+- **Pied de page** : « Made with ❤️ » au lieu de 💖.
+
 ## 0.12.0 — 2026-11-05
 - **Pied de page** : version installée, auteur, licence et lien vers le code source.
 - **Sources et crédits** : un panneau liste les sources des données (avec la date de leur dernière lecture), les bibliothèques et le projet.
