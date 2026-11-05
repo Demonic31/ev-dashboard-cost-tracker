@@ -23,6 +23,8 @@ services:
       LOGIN_SCOPE: ${LOGIN_SCOPE:-proxy}
       # app installée sur le téléphone : « VE PREPROD » et icône marquée « TEST », pour la distinguer de la PROD
       APP_LABEL: PREPROD
+      # Carburants de référence propres à la PREPROD (ex. sp98,gazole:5.5) ; vide = PETROL_FUEL de la pile principale
+      PETROL_FUELS: ${PETROL_FUELS:-}
     ports:
       # Lié à l'IP LAN uniquement : le reverse proxy Synology vient le chercher ici
       - "${LAN_IP:?LAN_IP manquant}:${PREPROD_PORT:-8081}:8080"

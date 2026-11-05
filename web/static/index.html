@@ -16,19 +16,19 @@
   :root {
     --bg: #f4f6f9; --card: #ffffff; --text: #1d2430; --muted: #6b7585; --border: #e3e7ee;
     --accent: #0f766e; --bleu: #2563eb; --bleu-hc: #1e40af; --blanc: #94a3b8; --blanc-hc: #64748b;
-    --rouge: #dc2626; --rouge-hc: #991b1b; --base: #a8a29e; --petrol: #b45309; --good: #15803d; --bad: #b91c1c; --lvl-l: 40%;
+    --rouge: #dc2626; --rouge-hc: #991b1b; --base: #a8a29e; --petrol: #b45309; --diesel: #7c3aed; --good: #15803d; --bad: #b91c1c; --lvl-l: 40%;
     --shadow: 0 1px 3px rgba(15, 23, 42, .08); --logo: none; color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg: #0f141b; --card: #171e28; --text: #e6ebf2; --muted: #8a96a8; --border: #263040;
-      --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --good: #4ade80; --bad: #f87171; --lvl-l: 60%;
+      --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --diesel: #a78bfa; --good: #4ade80; --bad: #f87171; --lvl-l: 60%;
       --shadow: none; --logo: invert(1); color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
     --bg: #0f141b; --card: #171e28; --text: #e6ebf2; --muted: #8a96a8; --border: #263040;
-    --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --good: #4ade80; --bad: #f87171; --lvl-l: 60%;
+    --accent: #2dd4bf; --blanc: #cbd5e1; --blanc-hc: #94a3b8; --base: #78716c; --petrol: #f59e0b; --diesel: #a78bfa; --good: #4ade80; --bad: #f87171; --lvl-l: 60%;
     --shadow: none; --logo: invert(1); color-scheme: dark;
   }
   * { box-sizing: border-box; }
@@ -44,7 +44,9 @@
   h2 small { color: var(--muted); font-weight: 400; font-size: .8rem; margin-left: 6px; }
   td small { color: var(--muted); font-size: .8em; }
   td small.petrol { display: block; color: var(--petrol); white-space: nowrap; cursor: help; }
+  .car .sub.fuels small.petrol { display: block; }
   .car .sub small.petrol { color: var(--petrol); font-size: inherit; white-space: nowrap; cursor: help; }
+  small.petrol.diesel, .car .sub small.petrol.diesel { color: var(--diesel); }
   .meta { color: var(--muted); font-size: .85rem; display: flex; gap: 12px; align-items: center; }
   button, select, input { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
            padding: 6px 10px; font: inherit; font-size: .85rem; }

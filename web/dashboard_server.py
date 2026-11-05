@@ -7,7 +7,7 @@ miroir du Sheet, rafraîchi au plus toutes les CACHE_SECONDS.
 
 En complément : la saison Tempo en cours (api-couleur-tempo.fr, comme la synchro) et les paramètres du comparatif
 des offres (prix des autres options EDF, prix moyen du carburant sur data.economie.gouv.fr) et, pour l'équivalent
-essence de chaque recharge, le prix moyen du carburant le jour de la recharge (archives journalières officielles).
+carburant de chaque recharge, le prix moyen de chaque carburant le jour de la recharge (archives journalières officielles).
 
 Mire de connexion facultative : un mot de passe unique dont l'empreinte (scrypt) est fournie au conteneur
 (DASHBOARD_PASSWORD_HASH, générée avec --hash-password), complété si besoin d'un code TOTP à 6 chiffres
@@ -256,7 +256,7 @@ class FuelPrice:
 
     def __init__(self, fuel, departement, days=3):
         if not (fuel.isalnum() and (not departement or departement.isalnum())):
-            raise ValueError("PETROL_FUEL / PETROL_DEPARTEMENT invalides")
+            raise ValueError("carburant ou PETROL_DEPARTEMENT invalide")
         self.fuel, self.departement, self.days = fuel.lower(), departement, days
         self.http = requests.Session()
 
@@ -282,43 +282,49 @@ class FuelPrice:
 
 
 class FuelHistory:
-    """Prix moyen d'un carburant à une date passée, pour l'équivalent essence de chaque recharge.
+    """Prix moyen des carburants à une date passée, pour l'équivalent carburant de chaque recharge.
 
     Même calcul que FuelPrice (moyenne des stations mises à jour les `days` derniers jours, France ou département),
-    appliqué à l'archive officielle du jour. Les jours manquants sont téléchargés en tâche de fond, un par un ;
-    les prix trouvés sont gardés dans DATA_DIR (volume Docker) pour ne pas être retéléchargés au redémarrage.
+    appliqué à l'archive officielle du jour. L'archive contient tous les carburants : un seul téléchargement par jour
+    sert à tous ceux de PETROL_FUELS. Les jours manquants sont téléchargés en tâche de fond, un par un ; les prix
+    trouvés sont gardés dans DATA_DIR (volume Docker), un fichier par carburant, pour ne pas être retéléchargés.
     """
 
-    def __init__(self, fuel, departement, data_dir, days=3):
-        self.name, self.days = FUEL_NAMES.get(fuel.lower()), days
+    def __init__(self, fuels, departement, data_dir, days=3):
+        self.fuels, self.days = [f for f in fuels if f in FUEL_NAMES], days
         # le code postal commence par le numéro de département (Corse : 20 pour 2A et 2B)
         self.cp = "20" if departement.upper() in ("2A", "2B") else departement
-        self.file = os.path.join(data_dir, f"fuel-{fuel.lower()}-{departement or 'fr'}.json") if data_dir else None
-        self.prices, self.pending, self.failed = {}, [], {}
+        self.files = {f: os.path.join(data_dir, f"fuel-{f}-{departement or 'fr'}.json") if data_dir else None
+                      for f in self.fuels}
+        self.prices, self.pending, self.failed = {f: {} for f in self.fuels}, [], {}
         self.lock, self.wake = threading.Lock(), threading.Event()
         self.http = requests.Session()
-        if self.file and os.path.isfile(self.file):
-            try:
-                with open(self.file, encoding="utf-8") as f:
-                    self.prices = json.load(f)
-                log.info("historique %s : %d jour(s) en cache", self.name, len(self.prices))
-            except (OSError, ValueError) as exc:
-                log.warning("historique carburant illisible (%s) : repart de zéro", exc)
-        if self.name:
+        for fuel, file in self.files.items():
+            if file and os.path.isfile(file):
+                try:
+                    with open(file, encoding="utf-8") as f:
+                        self.prices[fuel] = json.load(f)
+                    log.info("historique %s : %d jour(s) en cache", FUEL_NAMES[fuel], len(self.prices[fuel]))
+                except (OSError, ValueError) as exc:
+                    log.warning("historique %s illisible (%s) : repart de zéro", FUEL_NAMES[fuel], exc)
+        if self.fuels:
             threading.Thread(target=self.worker, name="fuel-history", daemon=True).start()
 
     def get(self, days):
-        """Prix connus pour ces jours (AAAA-MM-JJ) ; les jours passés manquants sont mis en file d'attente."""
-        if not self.name:
+        """Prix connus pour ces jours (AAAA-MM-JJ), par carburant ; les jours passés manquants (pour au moins
+        un carburant) sont mis en file d'attente."""
+        if not self.fuels:
             return {}
         today = date.today().isoformat()
         with self.lock:
-            missing = sorted(d for d in days if d < today and d not in self.prices and d not in self.pending
+            missing = sorted(d for d in days if d < today and d not in self.pending
+                             and any(d not in self.prices[f] for f in self.fuels)
                              and time.monotonic() - self.failed.get(d, -1e9) > 6 * 3600)
             self.pending += missing
+            known = {f: {d: self.prices[f][d] for d in days if d in self.prices[f]} for f in self.fuels}
         if missing:
             self.wake.set()
-        return {d: self.prices[d] for d in days if d in self.prices}
+        return known
 
     def worker(self):
         while True:
@@ -330,14 +336,18 @@ class FuelHistory:
                         break
                     day = self.pending[-1]  # les plus récents d'abord
                 try:
-                    price = self.fetch(date.fromisoformat(day))
+                    found = self.fetch(date.fromisoformat(day))
                     with self.lock:
-                        self.prices[day] = price
-                    log.info("prix %s du %s : %.3f €/L (%d stations)",
-                             self.name, day, price["price"], price["stations"])
-                    self.save()
+                        for fuel, price in found.items():
+                            self.prices[fuel][day] = price
+                        if len(found) < len(self.fuels):
+                            self.failed[day] = time.monotonic()  # carburant absent ce jour-là : nouvel essai dans 6 h
+                    log.info("prix du %s : %s", day, ", ".join(
+                        f"{FUEL_NAMES[f]} {p['price']:.3f} €/L ({p['stations']} stations)" for f, p in found.items())
+                        or "aucun")
+                    self.save(found)
                 except (requests.RequestException, zipfile.BadZipFile, ET.ParseError, ValueError, OSError) as exc:
-                    log.warning("prix %s du %s indisponible : %s", self.name, day, exc)
+                    log.warning("prix carburants du %s indisponibles : %s", day, exc)
                     with self.lock:
                         self.failed[day] = time.monotonic()  # nouvel essai dans 6 h
                 finally:
@@ -354,24 +364,33 @@ class FuelHistory:
                 raise ValueError("archive anormalement grosse")
             root = ET.fromstring(z.read(member))
         since = (day - timedelta(days=self.days - 1)).isoformat()
-        values = [float(p.get("valeur")) for pdv in root.iter("pdv") if pdv.get("cp", "").startswith(self.cp)
-                  for p in pdv.iter("prix") if p.get("nom") == self.name and (p.get("maj") or "")[:10] >= since]
-        if not values:
+        names = {FUEL_NAMES[f]: f for f in self.fuels}
+        values = {f: [] for f in self.fuels}
+        for pdv in root.iter("pdv"):
+            if pdv.get("cp", "").startswith(self.cp):
+                for p in pdv.iter("prix"):
+                    fuel = names.get(p.get("nom"))
+                    if fuel and (p.get("maj") or "")[:10] >= since:
+                        values[fuel].append(float(p.get("valeur")))
+        found = {f: {"price": round(sum(v) / len(v), 4), "stations": len(v)} for f, v in values.items() if v}
+        if not found:
             raise ValueError("aucun prix publié")
-        return {"price": round(sum(values) / len(values), 4), "stations": len(values)}
+        return found
 
-    def save(self):
-        if not self.file:
-            return
-        try:
-            with self.lock:
-                body = json.dumps(self.prices, sort_keys=True)
-            tmp = self.file + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write(body)
-            os.replace(tmp, self.file)
-        except OSError as exc:
-            log.warning("historique carburant non enregistré : %s", exc)
+    def save(self, fuels):
+        for fuel in fuels:
+            file = self.files.get(fuel)
+            if not file:
+                continue
+            try:
+                with self.lock:
+                    body = json.dumps(self.prices[fuel], sort_keys=True)
+                tmp = file + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write(body)
+                os.replace(tmp, file)
+            except OSError as exc:
+                log.warning("historique %s non enregistré : %s", FUEL_NAMES[fuel], exc)
 
 
 def env_price(name):
@@ -383,8 +402,28 @@ def offers_config():
     """Prix des options EDF à comparer avec Tempo et consommation de la voiture thermique de référence."""
     return {"base": env_price("BASE_PRICE_KWH"),
             "hchp": {"hc": env_price("HCHP_HC_PRICE_KWH"), "hp": env_price("HCHP_HP_PRICE_KWH")},
-            "zen": {"low": env_price("ZEN_LOW_PRICE_KWH"), "high": env_price("ZEN_HIGH_PRICE_KWH")},
-            "petrol_l_100km": env_price("PETROL_L_100KM")}
+            "zen": {"low": env_price("ZEN_LOW_PRICE_KWH"), "high": env_price("ZEN_HIGH_PRICE_KWH")}}
+
+
+def fuels_config():
+    """Carburants de référence pour l'équivalent thermique : PETROL_FUELS (ex. « sp98,gazole:5.5 », consommation
+    facultative après « : »), à défaut PETROL_FUEL ; consommation par défaut PETROL_L_100KM."""
+    default = env_price("PETROL_L_100KM")
+    fuels = {}
+    for item in (os.environ.get("PETROL_FUELS") or os.environ.get("PETROL_FUEL") or "sp98").split(","):
+        key, _, l100 = item.strip().lower().partition(":")
+        if not key:
+            continue
+        if key.isdigit():
+            raise ValueError("PETROL_FUELS : la consommation s'écrit avec un point (ex. gazole:5.5), la virgule sépare "
+                             "les carburants")
+        if key not in FUEL_NAMES:
+            raise ValueError(f"carburant inconnu dans PETROL_FUELS : {key} (possibles : {', '.join(FUEL_NAMES)})")
+        try:
+            fuels[key] = float(l100.replace(",", ".")) if l100.strip() else default
+        except ValueError:
+            raise ValueError(f"consommation invalide dans PETROL_FUELS : {item.strip()}") from None
+    return [{"key": k, "name": FUEL_NAMES[k], "l100": v} for k, v in fuels.items()]
 
 
 def hash_password(password, n=2 ** 15, r=8, p=1):
@@ -590,7 +629,7 @@ def index_page(logo):
     return html.encode()
 
 
-def make_handler(mirror, season, fuel, history, offers, battery_kwh, source, vehicle_name, gate, logo):
+def make_handler(mirror, season, fuel_prices, fuels, history, offers, battery_kwh, source, vehicle_name, gate, logo):
     class Handler(BaseHTTPRequestHandler):
         server_version = "ev-dashboard"
 
@@ -714,10 +753,12 @@ def make_handler(mirror, season, fuel, history, offers, battery_kwh, source, veh
                                 vehicle={"name": vehicle_name} if vehicle_name else source.name(force=force),
                                 health=source.health(force=force), car=car_state, charge_curves=charge_curves,
                                 charge_estimate=charge_estimate(car_state, charge_curves),
-                                offers=dict(offers, fuel=fuel.get() if offers["petrol_l_100km"] else None),
-                                # prix du carburant le jour de chaque recharge (équivalent essence)
+                                # carburants de référence avec leur prix du jour (si la consommation est connue)
+                                offers=dict(offers, fuels=[dict(f, current=fuel_prices[f["key"]].get() if f["l100"]
+                                                                else None) for f in fuels]),
+                                # prix de chaque carburant le jour de chaque recharge (équivalent carburant)
                                 fuel_history=history.get({str(r[1])[:10] for r in sheet["charges"]["rows"]})
-                                if offers["petrol_l_100km"] else {},
+                                if any(f["l100"] for f in fuels) else {},
                                 auth=gate.required(addr, self.headers))
                     self.send(200, json.dumps(data, ensure_ascii=False).encode(), "application/json; charset=utf-8",
                               self.renewed())
@@ -779,9 +820,17 @@ def main():
     mirror = SheetMirror(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/google-sa.json"),
                          spreadsheet_id, int(os.environ.get("CACHE_SECONDS", "300")))
     season = TempoSeason(os.environ.get("TEMPO_API_URL", "https://www.api-couleur-tempo.fr/api"))
-    fuel = FuelPrice(os.environ.get("PETROL_FUEL", "sp98"), os.environ.get("PETROL_DEPARTEMENT", "").strip())
-    history = FuelHistory(os.environ.get("PETROL_FUEL", "sp98"), os.environ.get("PETROL_DEPARTEMENT", "").strip(),
-                          os.environ.get("DATA_DIR", "").strip())
+    departement = os.environ.get("PETROL_DEPARTEMENT", "").strip()
+    try:
+        fuels = fuels_config()
+    except ValueError as exc:
+        sys.exit(str(exc))
+    for f in fuels:
+        if not f["l100"]:
+            log.warning("consommation de %s inconnue : renseigner %s:L/100km dans PETROL_FUELS (ou PETROL_L_100KM) ; "
+                        "pas d'équivalent %s", f["name"], f["key"], f["name"])
+    fuel_prices = {f["key"]: FuelPrice(f["key"], departement) for f in fuels}
+    history = FuelHistory([f["key"] for f in fuels if f["l100"]], departement, os.environ.get("DATA_DIR", "").strip())
     offers = offers_config()
     # Source de données de la marque (brands/<BRAND>/source.py)
     source = load_source(os.environ.get("BRAND") or "stellantis", os.path.join(APP_DIR, "brands"), os.environ)
@@ -794,8 +843,9 @@ def main():
             else f"requêtes venant du proxy {gate.trusted_proxy}"
         log.info("mire de connexion active%s (%s)", " avec code TOTP" if gate.totp_secret else "", scope)
     port = int(os.environ.get("PORT", "8080"))
-    log.info("dashboard VE sur le port %d (comparatif : %s)", port, json.dumps(offers))
-    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel, history, offers, env_price("BATTERY_KWH"), source,
+    log.info("dashboard VE sur le port %d (comparatif : %s ; carburants : %s)", port, json.dumps(offers),
+             ", ".join(f"{f['name']} {f['l100']} L/100 km" for f in fuels))
+    ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel_prices, fuels, history, offers, env_price("BATTERY_KWH"), source,
                                                          os.environ.get("VEHICLE_NAME", "").strip(), gate,
                                                          logo)).serve_forever()
 

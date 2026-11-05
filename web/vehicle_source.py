@@ -24,9 +24,11 @@ CHARGE_STATUSES = ("charging", "finished", "stopped", "failure", "disconnected")
 def cached(seconds):
     """Mémoïse le résultat d'une méthode sans argument pendant `seconds` (force=True pour relire)."""
     def deco(fn):
-        state = {"at": 0.0, "value": None, "lock": threading.Lock()}
+        states, guard = {}, threading.Lock()  # un cache par instance (ex. un FuelPrice par carburant)
 
         def wrapper(self, force=False):
+            with guard:
+                state = states.setdefault(id(self), {"at": 0.0, "value": None, "lock": threading.Lock()})
             with state["lock"]:
                 if force or state["value"] is None or time.monotonic() - state["at"] > seconds:
                     state["value"], state["at"] = fn(self), time.monotonic()

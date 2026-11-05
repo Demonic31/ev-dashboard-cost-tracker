@@ -153,7 +153,7 @@ function lastCharge() {
   return data.charges.rows.reduce((a, r) => r[C.start] && (!a || new Date(r[C.start]) > new Date(a[C.start])) ? r : a, null);
 }
 function lastChargeItems(r) {
-  const start = new Date(r[C.start]), end = r[2] ? new Date(r[2]) : null, eq = petrolEq(r);
+  const start = new Date(r[C.start]), end = r[2] ? new Date(r[2]) : null, eqs = fuelEqs(r);
   const pct = data.battery_kwh && num(r[C.kwhBat]) ? ` <small>(${fr(100 * num(r[C.kwhBat]) / data.battery_kwh, 0)} %)</small>` : "";
   return `
     <div><div class="label">Durée</div><div class="n">${hDuration(num(r[C.duration]))}</div>
@@ -163,7 +163,7 @@ function lastChargeItems(r) {
     <div><div class="label">Énergie voiture</div><div class="n">${fr(r[C.kwhBat], 1)} <small>kWh</small>${pct}</div>
       <div class="sub">${fr(r[C.kwh], 1)} kWh facturés</div></div>
     <div><div class="label">Coût</div><div class="n cost">${eur(r[C.cost])}</div>
-      <div class="sub">${fr(r[C.eurKwh], 4)} €/kWh${eq ? " · " + petrolCell(eq) : ""}</div></div>
+      <div class="sub">${fr(r[C.eurKwh], 4)} €/kWh</div>${eqs.length ? `<div class="sub fuels">${eqs.map(fuelTag).join("")}</div>` : ""}</div>
     <div class="slots"><div class="label">Heures creuses / pleines</div>${slotBar(r.slice(C.slots, C.slots + 6).map(Number))}</div>`;
 }
 function renderLastCharge() {
@@ -243,15 +243,19 @@ function renderOffers() {
     list.push({ name: "Zen Week-End + HC", sub: `WE, fériés et ${hcLabel} ${fr(o.zen.low, 4)} · semaine HP ${fr(o.zen.high, 4)} €/kWh` +
       (view.kwh ? ` · ${fr(100 * lowKwh / view.kwh, 0)} % au prix bas` : ""), cost, color: "--blanc-hc" });
   } else list.push({ name: "Zen Week-End + HC", missing: "ZEN_LOW_PRICE_KWH / ZEN_HIGH_PRICE_KWH" });
-  const fuel = o.fuel;
-  if (o.petrol_l_100km && fuel && !fuel.error)
-    list.push({ name: `Essence ${fuel.fuel}`, sub: `${fr(o.petrol_l_100km, 1)} L/100 km × ${fr(fuel.price, 3)} €/L ` +
-      `(moyenne ${fuel.zone}, ${fuel.stations} stations, ${fuel.days} derniers jours, relevé le ${new Date(fuel.fetched_at).toLocaleDateString("fr-FR")})`, cost: km * o.petrol_l_100km / 100 * fuel.price, color: "--petrol" });
-  else list.push({ name: "Essence", missing: fuel?.error ? "prix carburant indisponible : " + fuel.error : "PETROL_L_100KM" });
+  (o.fuels?.length ? o.fuels : [{ key: "sp98", name: "SP98" }]).forEach(f => {
+    const cur = f.current, color = f.key === "gazole" ? "--diesel" : "--petrol";
+    if (num(f.l100) && cur && !cur.error)
+      list.push({ name: fuelLabel(f), sub: `${fr(f.l100, 1)} L/100 km × ${fr(cur.price, 3)} €/L (moyenne ${cur.zone}, ` +
+        `${cur.stations} stations, ${cur.days} derniers jours, relevé le ${new Date(cur.fetched_at).toLocaleDateString("fr-FR")})`,
+        cost: km * f.l100 / 100 * cur.price, color });
+    else list.push({ name: fuelLabel(f), missing: cur?.error ? "prix carburant indisponible : " + cur.error
+      : `la consommation dans PETROL_FUELS (ex. ${f.key}:${f.key === "gazole" ? "5.5" : "7"})`, raw: !!cur?.error });
+  });
 
   const max = Math.max(...list.map(x => x.cost || 0)) || 1, ref = view.cost;
   document.getElementById("offers").innerHTML = list.map(x => {
-    if (x.missing) return `<div class="offer"><div class="name">${x.name}</div><div class="missing">Renseigner ${esc(x.missing)} dans .env</div></div>`;
+    if (x.missing) return `<div class="offer"><div class="name">${x.name}</div><div class="missing">${x.raw ? esc(x.missing) : `Renseigner ${esc(x.missing)} dans .env`}</div></div>`;
     const d = x.cost - ref, pct = ref ? 100 * d / ref : 0;
     return `<div class="offer${x.ref ? " ref" : ""}"><div class="name">${x.name}<small>${esc(x.sub)}</small></div>
       <div class="track"><span style="width:${100 * x.cost / max}%;background:${css(x.color)}"></span></div>
@@ -261,7 +265,7 @@ function renderOffers() {
   }).join("") + `<ul class="notes">
     <li>Coût de l'énergie seule (kWh facturés = kWh batterie × ${fr(coef, 2)}), abonnements non compris.</li>
     <li>Heures creuses et Zen supposent les mêmes heures creuses que Tempo (${hcLabel}, onglet Paramètres) ; Zen est réparti au prorata du temps de charge.</li>
-    <li>Essence : ${fr(km, 0)} km parcourus sur la période (${kmSource}) ; prix du carburant relu chaque jour.</li></ul>`;
+    <li>Carburants : ${fr(km, 0)} km parcourus sur la période (${kmSource}) ; prix moyen du carburant relu chaque jour.</li></ul>`;
 }
 
 // ------------------------------------------------------------------ graphiques
@@ -432,22 +436,36 @@ function slotBar(parts) {
   return `<div class="bar">${parts.map((p, i) => p > 0 ? `<span style="width:${100 * p / total}%;background:${css(TRANCHE_COLORS[i])}" title="${TRANCHES[i]} : ${fr(p, 2)} kWh"></span>` : "").join("")}</div>`;
 }
 
-// Équivalent essence d'une recharge : km de la ligne (compteur) s'ils sont connus, sinon km que permet l'énergie chargée
-// (kWh batterie ÷ consommation moyenne des trajets) ; × L/100 km de la voiture thermique × prix moyen du carburant
-// le jour de la recharge (prix actuel à défaut)
-function petrolEq(r) {
-  const o = data.offers || {}, l100 = num(o.petrol_l_100km), fuel = o.fuel, trips = data.trips.rows;
+// Carburants de référence (PETROL_FUELS) dont la consommation est connue ; couleur et libellés par carburant
+const fuels = () => (data.offers?.fuels || []).filter(f => num(f.l100));
+const fuelClass = f => f.key === "gazole" ? "petrol diesel" : "petrol";
+const fuelIn = f => f.key === "gazole" ? "GO" : f.name;                  // « ≈ 2,80 € en GO », « en SP98 »
+const fuelLabel = f => ({ gazole: "Diesel GO", gplc: "GPL", e85: "Superéthanol E85" })[f.key] || `Essence ${f.name}`;
+
+// Équivalent carburant d'une recharge : km de la ligne (compteur) s'ils sont connus, sinon km que permet l'énergie
+// chargée (kWh batterie ÷ consommation moyenne des trajets) ; × L/100 km du carburant × son prix moyen le jour de la
+// recharge (prix actuel à défaut)
+function fuelEq(r, f) {
+  const trips = data.trips.rows, cur = f.current && !f.current.error ? f.current : null;
   const km = sum(trips.filter(t => num(t[T.kwh]) > 0), T.km), kwh100 = km ? 100 * sum(trips, T.kwh) / km : 0;
-  const kwhBat = num(r[C.kwhBat]), day = String(r[C.start]).slice(0, 10), hist = (data.fuel_history || {})[day];
-  const price = hist?.price ?? (fuel && !fuel.error ? fuel.price : 0);
+  const kwhBat = num(r[C.kwhBat]), day = String(r[C.start]).slice(0, 10), hist = (data.fuel_history?.[f.key] || {})[day];
+  const price = hist?.price ?? cur?.price ?? 0, l100 = num(f.l100);
   const rowKm = num(r[C.km]), eqKm = rowKm > 0 ? rowKm : kwh100 && kwhBat ? 100 * kwhBat / kwh100 : 0;
   if (!l100 || !eqKm || !price) return null;
-  return { cost: eqKm * l100 / 100 * price, km: eqKm, price, l100, fuel: fuel?.fuel || "essence",
+  return { fuel: f, cost: eqKm * l100 / 100 * price, km: eqKm, price, l100,
            kmHow: rowKm > 0 ? `${fr(eqKm, 0)} km parcourus` : `≈ ${fr(eqKm, 0)} km estimés (${fr(kwh100, 1)} kWh/100 km)`,
            when: hist ? `du ${new Date(day).toLocaleDateString("fr-FR")}` : "actuel" };
 }
-const petrolCell = eq => eq ? `<small class="petrol" title="${esc(`${eq.kmHow} × ` +
-  `${fr(eq.l100, 1)} L/100 km × ${fr(eq.price, 3)} €/L (prix moyen ${eq.fuel} ${eq.when})`)}">≈ ${eur(eq.cost)} en ${esc(eq.fuel)}</small>` : "";
+const fuelEqs = r => fuels().map(f => fuelEq(r, f)).filter(Boolean);
+const fuelTag = eq => `<small class="${fuelClass(eq.fuel)}" title="${esc(`${eq.kmHow} × ` +
+  `${fr(eq.l100, 1)} L/100 km × ${fr(eq.price, 3)} €/L (prix moyen ${fuelIn(eq.fuel)} ${eq.when})`)}">≈ ${eur(eq.cost)} en ${esc(fuelIn(eq.fuel))}</small>`;
+const fuelCells = r => fuelEqs(r).map(fuelTag).join("");
+// Total du mois par carburant
+const fuelMonth = list => fuels().map(f => {
+  const eqs = list.map(r => fuelEq(r, f)).filter(Boolean);
+  return eqs.length ? `<small class="${fuelClass(f)}" title="Total des équivalents ${esc(fuelIn(f))} du mois">≈ ${
+    eur(eqs.reduce((t, e) => t + e.cost, 0))} en ${esc(fuelIn(f))}</small>` : "";
+}).join("");
 
 // Dépliage des mois : les lignes data-in du mois, et pour les recharges la courbe si elle était ouverte
 function bindMonths(el, open) {
@@ -479,15 +497,13 @@ function renderTable() {
         const cost = sum(list, C.cost), kwh = sum(list, C.kwh), km = sum(list, C.km);
         const eur100 = ratio(sum(list.filter(r => num(r[C.km]) > 0), C.cost), km, 100), eurKwh = ratio(cost, kwh);
         const slots = TRANCHES.map((_, i) => sum(list, C.slots + i));
-        const eqs = list.map(petrolEq), petrol = eqs.some(Boolean) ? { ...eqs.find(Boolean),
-          cost: eqs.reduce((t, e) => t + (e?.cost || 0), 0), km: eqs.reduce((t, e) => t + (e?.km || 0), 0) } : null;
         return monthHead(m, "Afficher les recharges du mois") + `<td><small>${list.length} recharge${list.length > 1 ? "s" : ""}</small></td><td></td>
-          <td>${fr(sum(list, C.kwhBat), 1)}</td><td></td><td class="text">${slotBar(slots)}</td><td>${fr(kwh, 1)}</td><td>${eur(cost)}${petrol ? `<small class="petrol" title="Total des équivalents essence du mois">≈ ${eur(petrol.cost)} en ${esc(petrol.fuel)}</small>` : ""}</td>
+          <td>${fr(sum(list, C.kwhBat), 1)}</td><td></td><td class="text">${slotBar(slots)}</td><td>${fr(kwh, 1)}</td><td>${eur(cost)}${fuelMonth(list)}</td>
           <td>${eurKwh === "" ? "–" : eur(eurKwh, 4)}</td><td>${fr(km, 0)}</td><td>${eur100 === "" ? "–" : eur(eur100)}</td><td></td></tr>` +
         list.map(r => `<tr class="fold" data-in="${m}" data-id="${esc(r[0])}" aria-expanded="false" title="Afficher la courbe de charge" hidden>
           <td><span class="chev">▸</span> ${dt(r[C.start])}</td><td>${fr(r[C.duration], 1)} h</td><td>${fr(r[3], 0)} → ${fr(r[4], 0)} %</td>
           <td>${fr(r[C.kwhBat], 1)}${data.battery_kwh && num(r[C.kwhBat]) ? ` <small>(${fr(100 * num(r[C.kwhBat]) / data.battery_kwh, 0)} %)</small>` : ""}</td><td class="text">${r[C.color] ? `<span class="pill ${esc(r[C.color])}">${esc(r[C.color])}</span>` : "–"}</td>
-          <td class="text">${slotBar(r.slice(C.slots, C.slots + 6).map(Number))}</td><td>${fr(r[C.kwh], 1)}</td><td>${eur(r[C.cost])}${petrolCell(petrolEq(r))}</td>
+          <td class="text">${slotBar(r.slice(C.slots, C.slots + 6).map(Number))}</td><td>${fr(r[C.kwh], 1)}</td><td>${eur(r[C.cost])}${fuelCells(r)}</td>
           <td>${eur(r[C.eurKwh], 4)}</td><td>${fr(r[C.km], 0)}</td><td>${eur(r[C.eur100])}</td><td class="note">${esc(r[C.note])}</td></tr>
           <tr class="curve-row" hidden><td colspan="12"></td></tr>`).join("");
       }).join("")}</tbody></table>`;
