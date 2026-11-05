@@ -163,7 +163,7 @@ function lastChargeItems(r) {
     <div><div class="label">Énergie voiture</div><div class="n">${fr(r[C.kwhBat], 1)} <small>kWh</small>${pct}</div>
       <div class="sub">${fr(r[C.kwh], 1)} kWh facturés</div></div>
     <div><div class="label">Coût</div><div class="n cost">${eur(r[C.cost])}</div>
-      <div class="sub">${fr(r[C.eurKwh], 4)} €/kWh${eq ? ` · ≈ ${eur(eq.cost)} en ${esc(eq.fuel)}` : ""}</div></div>
+      <div class="sub">${fr(r[C.eurKwh], 4)} €/kWh${eq ? " · " + petrolCell(eq) : ""}</div></div>
     <div class="slots"><div class="label">Heures creuses / pleines</div>${slotBar(r.slice(C.slots, C.slots + 6).map(Number))}</div>`;
 }
 function renderLastCharge() {
