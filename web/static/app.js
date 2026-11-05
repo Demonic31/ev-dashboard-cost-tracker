@@ -249,9 +249,9 @@ function renderLastCharge() {
   if (!r) return;
   const when = new Date(r[C.start]).toLocaleString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit",
     hour: "2-digit", minute: "2-digit" });
-  el.innerHTML = `<button type="button" class="lc-summary" aria-expanded="${lastChargeOpen}"><span class="chev">▸</span>
-    <b>🔌 Dernière recharge</b> <span>${when}</span><span>${hDuration(num(r[C.duration]))}</span>
-    <span>${fr(r[3], 0)} → ${fr(r[4], 0)} %</span><span>${fr(r[C.kwhBat], 1)} kWh</span><b class="cost">${eur(r[C.cost])}</b></button>
+  el.innerHTML = `<button type="button" class="lc-summary" aria-expanded="${lastChargeOpen}"><span class="lc-head"><span class="chev">▸</span>
+    <b>🔌 Dernière recharge</b> <span class="when">${when}</span></span><span class="lc-stats"><span>${hDuration(num(r[C.duration]))}</span>
+    <span>${fr(r[3], 0)} → ${fr(r[4], 0)} %</span><span>${fr(r[C.kwhBat], 1)} kWh</span><b class="cost">${eur(r[C.cost])}</b></span></button>
     <div class="items"${lastChargeOpen ? "" : " hidden"}>${lastChargeItems(r)}</div>`;
   el.querySelector(".lc-summary").addEventListener("click", () => { lastChargeOpen = !lastChargeOpen; renderLastCharge(); });
 }

@@ -101,6 +101,14 @@
   .lc-summary b { color: var(--text); } .lc-summary .cost { color: var(--accent); margin-left: auto; }
   .lc-summary .chev { display: inline-block; transition: transform .15s; }
   .lc-summary[aria-expanded="true"] .chev { transform: rotate(90deg); }
+  /* PC : une seule ligne ; téléphone : en-tête puis, sur la 2e ligne, durée · niveau · kWh · coût */
+  .lc-head, .lc-stats { display: contents; }
+  @media (max-width: 640px) {
+    .lc-summary { gap: 4px 0; }
+    .lc-head, .lc-stats { display: flex; align-items: baseline; flex-wrap: wrap; width: 100%; }
+    .lc-head { gap: 0 8px; } .lc-head .when { margin-left: auto; font-size: .85rem; }
+    .lc-stats { gap: 0 12px; padding-left: 1.3em; }
+  }
   /* Pied de page : discret, centré ; sur mobile, « Dashboard VE <version> » seul sur la première ligne */
   .foot { margin-top: 28px; text-align: center; color: var(--muted); font-size: .78rem; line-height: 1.7; }
   .foot p { margin: 0; }
