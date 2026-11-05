@@ -61,6 +61,10 @@ class StellantisSource(VehicleSource):
     def __init__(self, url, vin, config_dir):
         self.psacc, self.config_dir = Psacc(url, vin), config_dir
 
+    def credit(self):
+        return {"group": "Stellantis", "name": "psa_car_controller", "url": "https://github.com/flobz/psa_car_controller",
+                "provides": "état de la voiture, santé de la batterie (SOH), courbes de charge, recharges et trajets"}
+
     @cached(3600)
     def name(self):
         try:

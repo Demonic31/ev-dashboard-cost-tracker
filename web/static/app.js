@@ -114,6 +114,83 @@ function renderTitle() {
   document.title = `${name} · Dashboard VE`;
 }
 
+// Pied de page : version (lien vers sa note de version) et libellé PREPROD
+function renderFooter() {
+  const foot = document.getElementById("foot"), v = data.app?.version;
+  const ver = document.getElementById("appVersion");
+  ver.textContent = v || "";
+  if (v) ver.href = `${foot.dataset.repo}/releases/tag/${encodeURIComponent(v)}`;
+  document.getElementById("appLabel").innerHTML = data.app?.label ? `<span class="label">${esc(data.app.label)}</span>` : "";
+}
+
+// Panneau « Sources et crédits » : sources des données (avec la date de leur dernière lecture), bibliothèques, projet.
+// Le bouton retour du téléphone le ferme (entrée d'historique ajoutée à l'ouverture).
+const link = (url, text) => `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(text)}</a>`;
+const stamp = iso => iso ? new Date(iso).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric",
+  hour: "2-digit", minute: "2-digit" }) : "";
+function renderSources() {
+  const c = data.credit, repo = document.getElementById("foot").dataset.repo, v = data.app?.version;
+  // titre, description et, en option, une ligne par détail (date de relève…)
+  const item = (title, desc, ...lines) => `<li>${title}<small>${desc}</small>${lines.filter(Boolean).map(l => `<small>${l}</small>`).join("")}</li>`;
+  const fuelLines = (data.offers?.fuels || []).filter(f => f.current && !f.current.error).map(f =>
+    `${esc(fuelIn(f))} relevé le ${stamp(f.current.fetched_at)} (${f.current.stations} stations, ${esc(f.current.zone)})`);
+  const days = Object.values(data.fuel_history || {}).reduce((n, h) => Math.max(n, Object.keys(h).length), 0);
+  const sources = [
+    c?.name && /^https:\/\//.test(c.url || "") ? item(`Véhicule${c.group ? ` ${esc(c.group)}` : ""} : ${link(c.url, c.name)}`,
+      esc(c.provides || "données du véhicule"), data.vehicle?.name ? esc(data.vehicle.name) : "") : "",
+    item("Google Sheet", "calcul des coûts (recharges, trajets, indicateurs, totaux par mois)", data.fetched_at ? `relu le ${stamp(data.fetched_at)}` : ""),
+    item(`Tempo : ${link("https://www.api-couleur-tempo.fr", "api-couleur-tempo.fr")}`, "couleur des jours et saison Tempo",
+      data.season?.fetched_at ? `relu le ${stamp(data.season.fetched_at)}` : ""),
+    item(`Carburants : ${link("https://www.prix-carburants.gouv.fr/rubrique/opendata/", "prix-carburants.gouv.fr")}`,
+      "prix moyens du jour et archives journalières officielles" + (days ? ` (${days} jour${days > 1 ? "s" : ""} de recharge)` : ""), ...fuelLines),
+  ].join("");
+  document.getElementById("sourcesBody").innerHTML = `
+    <h3>Données</h3><ul>${sources}</ul>
+    <h3>Bibliothèques</h3><ul>${item(link("https://www.chartjs.org", "Chart.js") + " 4.4.1", "graphiques · " +
+      link("https://github.com/chartjs/Chart.js/blob/master/LICENSE.md", "licence MIT") + ", © Chart.js Contributors")}</ul>
+    <h3>Projet</h3><ul>${item(`Dashboard VE ${v ? link(`${repo}/releases/tag/${encodeURIComponent(v)}`, v) : ""}`,
+      `${link(repo, "code source")} · ${link(repo + "/blob/main/LICENSE", "licence MIT")} · © 2026 Demonic31`)}</ul>`;
+}
+// Nouveautés : journal des versions lu une fois (/api/data ne le transporte pas), chaque version liée à sa note GitHub
+let changelog = null;
+const mdInline = t => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`(.+?)`/g, "<code>$1</code>");
+async function renderChangelog() {
+  const body = document.getElementById("changelogBody"), repo = document.getElementById("foot").dataset.repo, cur = data.app?.version;
+  if (!changelog) {
+    body.innerHTML = '<div class="empty">Chargement…</div>';
+    try {
+      const resp = await fetch("api/changelog");
+      if (!resp.ok) throw new Error(resp.status);
+      changelog = await resp.json();
+    } catch (e) { body.innerHTML = `<div class="empty">Journal indisponible : ${esc(e.message)}</div>`; return; }
+  }
+  const day = d => /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(d + "T12:00").toLocaleDateString("fr-FR") : esc(d);
+  body.innerHTML = (changelog.length ? changelog.map(v => `<section class="release"><h3>${esc(v.version)}
+      ${v.version === cur ? '<span class="current">installée</span>' : ""}<small>${day(v.date)}</small>
+      <span class="gh-link">${link(`${repo}/releases/tag/${encodeURIComponent(v.version)}`, "Note de version")}</span></h3>
+      <ul>${v.items.map(i => `<li>${mdInline(i)}</li>`).join("")}</ul></section>`).join("")
+    : '<div class="empty">Aucune version dans le journal</div>') +
+    `<p class="all">${link(repo + "/releases", "Toutes les versions sur GitHub")}</p>`;
+}
+
+// Panneaux (Sources et crédits, Nouveautés) : fermés par ✕, Échap, clic sur le fond ou bouton retour du téléphone
+// (entrée d'historique ajoutée à l'ouverture)
+function setupDialog(id, openerId, closeId, render) {
+  const dlg = document.getElementById(id);
+  document.getElementById(openerId).addEventListener("click", e => {
+    e.preventDefault();
+    if (!data || dlg.open) return;
+    render(); dlg.showModal(); history.pushState({ dialog: id }, "");
+  });
+  const close = () => { if (dlg.open) history.state?.dialog === id ? history.back() : dlg.close(); };
+  document.getElementById(closeId).addEventListener("click", close);
+  dlg.addEventListener("click", e => { if (e.target === dlg) close(); });  // clic sur le fond
+  dlg.addEventListener("cancel", e => { e.preventDefault(); close(); });   // touche Échap
+  window.addEventListener("popstate", () => { if (dlg.open) dlg.close(); });
+}
+setupDialog("sources", "openSources", "closeSources", renderSources);
+setupDialog("changelog", "appVersion", "closeChangelog", renderChangelog);
+
 function renderCar() {
   const el = document.getElementById("car"), c = data.car || {};
   el.hidden = data.car === null;  // donnée que la source de la marque ne fournit pas
@@ -546,7 +623,7 @@ async function load(force = false) {
     err.style.display = "none";
     document.getElementById("fetched").textContent = "Données du Sheet au " + new Date(data.fetched_at).toLocaleString("fr-FR");
     document.getElementById("logout").hidden = !data.auth;
-    renderTitle(); renderHealth(); renderCar(); renderLastCharge(); renderSeason(); render();
+    renderTitle(); renderHealth(); renderCar(); renderLastCharge(); renderSeason(); renderFooter(); render();
   } catch (e) {
     err.textContent = "Impossible de lire le Google Sheet : " + e.message;
     err.style.display = "block";

@@ -101,6 +101,46 @@
   .lc-summary b { color: var(--text); } .lc-summary .cost { color: var(--accent); margin-left: auto; }
   .lc-summary .chev { display: inline-block; transition: transform .15s; }
   .lc-summary[aria-expanded="true"] .chev { transform: rotate(90deg); }
+  /* Pied de page : discret, centré ; sur mobile, « Dashboard VE <version> » seul sur la première ligne */
+  .foot { margin-top: 28px; text-align: center; color: var(--muted); font-size: .78rem; line-height: 1.7; }
+  .foot p { margin: 0; }
+  .foot a { color: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+    text-underline-offset: 2px; }
+  .foot a:hover { color: var(--text); }
+  .foot .gh { display: inline-block; vertical-align: -3px; text-decoration: none; }
+  .foot .label { margin-left: 6px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); font-size: .7rem; }
+  .foot .item { white-space: nowrap; }
+  @media (max-width: 640px) { .foot .made { display: block; } .foot .made .sep { display: none; } }
+  /* Panneau « Sources et crédits » */
+  .sources-dlg { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; border: 1px solid var(--border);
+    border-radius: 14px; background: var(--card); color: var(--text); box-shadow: 0 12px 40px rgb(0 0 0 / .25); }
+  .sources-dlg::backdrop { background: rgb(0 0 0 / .45); }
+  .sources-dlg .dlg-head { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px; background: var(--card); border-bottom: 1px solid var(--border); }
+  .sources-dlg h2 { margin: 0; font-size: 1.05rem; }
+  .sources-dlg h3 { margin: 16px 0 6px; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .sources-dlg #sourcesBody, .sources-dlg #changelogBody { padding: 2px 18px 18px; }
+  .sources-dlg ul { list-style: none; margin: 0; padding: 0; }
+  .sources-dlg li { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: .9rem; }
+  .sources-dlg li:last-child { border-bottom: 0; }
+  .sources-dlg li small { display: block; color: var(--muted); font-size: .78rem; margin-top: 2px; }
+  .sources-dlg a { color: var(--accent); }
+  .sources-dlg .release { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .sources-dlg .release:last-of-type { border-bottom: 0; }
+  .sources-dlg .release h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0 0 4px; font-size: .95rem;
+    text-transform: none; letter-spacing: 0; color: var(--text); }
+  .sources-dlg .release h3 small { color: var(--muted); font-weight: 400; font-size: .78rem; }
+  .sources-dlg .release h3 .gh-link { margin-left: auto; font-weight: 400; font-size: .8rem; }
+  .sources-dlg .release .current { padding: 0 8px; border-radius: 999px; font-size: .7rem; font-weight: 600; color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+  .sources-dlg .release ul { list-style: disc; padding-left: 20px; }
+  .sources-dlg .release li { padding: 2px 0; border: 0; font-size: .86rem; }
+  .sources-dlg .release b { font-weight: 650; }
+  .sources-dlg .release code { font-size: .8rem; padding: 0 4px; border-radius: 4px; background: color-mix(in srgb, var(--muted) 15%, transparent); }
+  .sources-dlg .all { margin: 12px 0 0; font-size: .86rem; }
+  .dlg-close { border: 1px solid var(--border); background: transparent; color: var(--text); border-radius: 8px;
+    width: 32px; height: 32px; padding: 0; cursor: pointer; display: grid; place-items: center; }
+  .dlg-close svg { display: block; }
   /* 9 tuiles : 2 colonnes sur mobile (la dernière sur toute la largeur), 3 × 3 au-delà */
   .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
   @media (max-width: 640px) {
@@ -251,7 +291,30 @@
     <h2>Comparatif des offres <small>même énergie, même kilométrage, sur la période</small></h2>
     <div id="offers"></div>
   </section>
+
+  <!-- Pied de page : version (remplie par app.js), auteur, licence, code source et sources des données -->
+  <footer class="foot" id="foot" data-repo="https://github.com/Demonic31/ev-dashboard-cost-tracker">
+    <p><span class="app">Dashboard VE <a id="appVersion" title="Nouveautés de cette version"></a><span id="appLabel"></span></span><span
+      class="made"><span class="sep"> · </span>Made with 💖 by <a href="https://github.com/Demonic31" target="_blank" rel="noopener">Demonic31</a>
+      · <a href="https://github.com/Demonic31/ev-dashboard-cost-tracker/blob/main/LICENSE" target="_blank" rel="noopener">© 2026 MIT</a>
+      · <a class="gh" href="https://github.com/Demonic31/ev-dashboard-cost-tracker" target="_blank" rel="noopener" title="Code source sur GitHub" aria-label="Code source sur GitHub"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path fill="currentColor" d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg></a></span></p>
+    <p><a href="#sources" id="openSources">Sources et crédits</a></p>
+  </footer>
 </main>
+
+<!-- Sources et crédits : panneau ouvert depuis le pied de page, rempli par app.js -->
+<dialog class="sources-dlg" id="sources" aria-labelledby="sourcesTitle">
+  <div class="dlg-head"><h2 id="sourcesTitle">Sources et crédits</h2>
+    <button type="button" class="dlg-close" id="closeSources" aria-label="Fermer"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div>
+  <div id="sourcesBody"></div>
+</dialog>
+
+<!-- Nouveautés : journal des versions (CHANGELOG.md), ouvert depuis le numéro de version du pied de page -->
+<dialog class="sources-dlg" id="changelog" aria-labelledby="changelogTitle">
+  <div class="dlg-head"><h2 id="changelogTitle">Nouveautés</h2>
+    <button type="button" class="dlg-close" id="closeChangelog" aria-label="Fermer"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button></div>
+  <div id="changelogBody"></div>
+</dialog>
 
 <script src="static/app.js"></script>
 </body>

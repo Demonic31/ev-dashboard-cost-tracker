@@ -6,8 +6,9 @@ ENV PYTHONUNBUFFERED=1 TZ=Europe/Paris
 WORKDIR /app
 COPY web/requirements.txt .
 RUN pip install --no-cache-dir --root-user-action=ignore -r requirements.txt
-COPY web/dashboard_server.py web/pause_server.py web/vehicle_source.py ./
+COPY web/dashboard_server.py web/pause_server.py web/vehicle_source.py web/VERSION ./
 COPY web/static/ static/
+COPY CHANGELOG.md ./
 COPY brands/ brands/
 # Données gardées entre deux redémarrages (prix passés du carburant), sur un volume Docker
 RUN mkdir /data && chown 1000:1000 /data
