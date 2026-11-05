@@ -146,6 +146,39 @@ function renderCar() {
       ${fr(est.rate, 1)} %/h (${esc(est.source)}) ; recalé à la prochaine synchro (réveil ou fin de charge).</div>` : ""}`;
 }
 
+// Dernière recharge connue (indépendante de la période), sous le bloc Voiture : ligne de résumé dépliable,
+// ouverte par défaut sur grand écran ; l'état choisi est conservé lors des actualisations
+let lastChargeOpen = matchMedia("(min-width: 641px)").matches;
+function lastCharge() {
+  return data.charges.rows.reduce((a, r) => r[C.start] && (!a || new Date(r[C.start]) > new Date(a[C.start])) ? r : a, null);
+}
+function lastChargeItems(r) {
+  const start = new Date(r[C.start]), end = r[2] ? new Date(r[2]) : null, eq = petrolEq(r);
+  const pct = data.battery_kwh && num(r[C.kwhBat]) ? ` <small>(${fr(100 * num(r[C.kwhBat]) / data.battery_kwh, 0)} %)</small>` : "";
+  return `
+    <div><div class="label">Durée</div><div class="n">${hDuration(num(r[C.duration]))}</div>
+      <div class="sub">${hm(start)}${end ? " → " + hm(end) : ""}</div></div>
+    <div><div class="label">Niveau</div><div class="n">${fr(r[3], 0)} → ${fr(r[4], 0)} <small>%</small></div>
+      <div class="sub">${r[C.color] ? `<span class="pill ${esc(r[C.color])}">${esc(r[C.color])}</span>` : ""}</div></div>
+    <div><div class="label">Énergie voiture</div><div class="n">${fr(r[C.kwhBat], 1)} <small>kWh</small>${pct}</div>
+      <div class="sub">${fr(r[C.kwh], 1)} kWh facturés</div></div>
+    <div><div class="label">Coût</div><div class="n cost">${eur(r[C.cost])}</div>
+      <div class="sub">${fr(r[C.eurKwh], 4)} €/kWh${eq ? ` · ≈ ${eur(eq.cost)} en ${esc(eq.fuel)}` : ""}</div></div>
+    <div class="slots"><div class="label">Heures creuses / pleines</div>${slotBar(r.slice(C.slots, C.slots + 6).map(Number))}</div>`;
+}
+function renderLastCharge() {
+  const el = document.getElementById("lastCharge"), r = lastCharge();
+  el.hidden = !r;
+  if (!r) return;
+  const when = new Date(r[C.start]).toLocaleString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit",
+    hour: "2-digit", minute: "2-digit" });
+  el.innerHTML = `<button type="button" class="lc-summary" aria-expanded="${lastChargeOpen}"><span class="chev">▸</span>
+    <b>🔌 Dernière recharge</b> <span>${when}</span><span>${hDuration(num(r[C.duration]))}</span>
+    <span>${fr(r[3], 0)} → ${fr(r[4], 0)} %</span><span>${fr(r[C.kwhBat], 1)} kWh</span><b class="cost">${eur(r[C.cost])}</b></button>
+    <div class="items"${lastChargeOpen ? "" : " hidden"}>${lastChargeItems(r)}</div>`;
+  el.querySelector(".lc-summary").addEventListener("click", () => { lastChargeOpen = !lastChargeOpen; renderLastCharge(); });
+}
+
 // Ordre d'affichage des tuiles (indices des colonnes du Dashboard) : coût, énergie, consommation, distance
 const KPI_ORDER = [0, 3, 1, 5, 4, 8, 2, 7, 6];
 
@@ -497,7 +530,7 @@ async function load(force = false) {
     err.style.display = "none";
     document.getElementById("fetched").textContent = "Données du Sheet au " + new Date(data.fetched_at).toLocaleString("fr-FR");
     document.getElementById("logout").hidden = !data.auth;
-    renderTitle(); renderHealth(); renderCar(); renderSeason(); render();
+    renderTitle(); renderHealth(); renderCar(); renderLastCharge(); renderSeason(); render();
   } catch (e) {
     err.textContent = "Impossible de lire le Google Sheet : " + e.message;
     err.style.display = "block";
