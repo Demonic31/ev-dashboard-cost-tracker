@@ -20,7 +20,7 @@ Testé avec une Peugeot e-208. **Ajouter une marque** : créer `brands/<marque>/
 
 ## 📸 Aperçu
 
-Captures du front web avec des **données fictives**.
+Captures du front web avec des **données fictives**. Pour les régénérer après une évolution du front : `tools/screenshots/run.sh http://<hôte>:8080/` (Docker et python3 requis).
 
 | | Clair | Sombre |
 | :--- | :---: | :---: |
