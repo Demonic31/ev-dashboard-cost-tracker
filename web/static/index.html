@@ -101,6 +101,9 @@
   .lc-summary b { color: var(--text); } .lc-summary .cost { color: var(--accent); margin-left: auto; }
   .lc-summary .chev { display: inline-block; transition: transform .15s; }
   .lc-summary[aria-expanded="true"] .chev { transform: rotate(90deg); }
+  /* Replié (#48) : barre HC/HP sous le résumé, alignée sur le texte après le chevron */
+  .lc-bar { margin-top: 8px; padding-left: 1.3em; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  .lc-bar > span { font-size: .78rem; color: var(--muted); } .lc-bar .bar { flex: 1; }
   /* PC : une seule ligne ; téléphone : en-tête puis, sur la 2e ligne, durée · niveau · kWh · coût */
   .lc-head, .lc-stats { display: contents; }
   @media (max-width: 640px) {
