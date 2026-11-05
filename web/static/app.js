@@ -264,16 +264,28 @@ function lastChargeItems(r) {
       <div class="sub lc-price"><span>${fr(r[C.eurKwh], 4)} €/kWh${eqs.length ? '<span class="dot"> ·</span>' : ""}</span>${eqs.length ? `<span class="fuels">${eqs.map(fuelTag).join("")}</span>` : ""}</div></div>
     <div class="slots"><div class="label">Heures creuses / pleines</div>${slotBar(r.slice(C.slots, C.slots + 6).map(Number))}</div>`;
 }
+// Part des heures pleines d'une recharge (#50) : « dont 12 % en HP », couleur de la tranche HP dominante ; rien si 100 % HC
+const HP_TEXT = ["--bleu", "--blanc-txt", "--rouge"];
+function hpNote(slots) {
+  const total = slots.reduce((a, b) => a + (b || 0), 0), hp = slots.filter((_, i) => isHP(i));
+  const hpKwh = hp.reduce((a, b) => a + (b || 0), 0);
+  if (!total || !(hpKwh > 0)) return "";
+  const pct = 100 * hpKwh / total, top = hp.indexOf(Math.max(...hp));
+  const tip = `Heures pleines : ${fr(hpKwh, 2)} kWh sur ${fr(total, 2)} kWh` +
+    hp.map((k, j) => k > 0 ? `\n${TRANCHES[2 * j + 1]} : ${fr(k, 2)} kWh` : "").join("");
+  return `<span class="lc-hp" style="color:var(${HP_TEXT[top]})" title="${esc(tip)}">dont ${pct < 1 ? "< 1" : fr(pct, 0)} % en HP</span>`;
+}
 function renderLastCharge() {
   const el = document.getElementById("lastCharge"), r = lastCharge();
   el.hidden = !r;
   if (!r) return;
+  const slots = r.slice(C.slots, C.slots + 6).map(Number);
   const when = new Date(r[C.start]).toLocaleString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit",
     hour: "2-digit", minute: "2-digit" });
   el.innerHTML = `<button type="button" class="lc-summary" aria-expanded="${lastChargeOpen}"><span class="lc-head"><span class="chev">▸</span>
     <b>🔌 Dernière recharge</b> <span class="when">${when}</span></span><span class="lc-stats"><span>${hDuration(num(r[C.duration]))}</span>
     <span>${fr(r[3], 0)} → ${fr(r[4], 0)} %</span><span>${fr(r[C.kwhBat], 1)} kWh</span><b class="cost">${eur(r[C.cost])}</b></span></button>
-    ${lastChargeOpen ? "" : `<div class="lc-bar"><span>HC/HP</span>${slotBar(r.slice(C.slots, C.slots + 6).map(Number))}</div>`}
+    ${lastChargeOpen ? "" : `<div class="lc-bar"><span>HC/HP</span>${slotBar(slots)}${hpNote(slots)}</div>`}
     <div class="items"${lastChargeOpen ? "" : " hidden"}>${lastChargeItems(r)}</div>`;
   const toggle = () => { lastChargeOpen = !lastChargeOpen; renderLastCharge(); };
   el.querySelector(".lc-summary").addEventListener("click", toggle);
