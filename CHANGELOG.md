@@ -4,6 +4,9 @@ Résumé de chaque version, affiché dans le dashboard (clic sur le numéro de v
 
 Format : un titre `## <version> — <AAAA-MM-JJ>` par version, puis des puces `- ` d'une ligne (`**gras**` et `` `code` `` acceptés).
 
+## 0.13.0 — 2026-11-05
+- **Tranches Tempo plus lisibles** : une teinte vive par couleur de jour, heures creuses en aplat et heures pleines en hachures, sur le camembert comme sur les barres de répartition.
+
 ## 0.12.2 — 2026-11-05
 - **Dernière recharge repliée sur téléphone** : toujours sur deux lignes, la durée en tête de la 2ᵉ ligne.
 

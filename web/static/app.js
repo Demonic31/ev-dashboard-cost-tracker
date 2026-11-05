@@ -20,7 +20,28 @@ const T = { id: 0, start: 1, end: 2, km: 3, kwh: 4, kwh100: 5, odo: 6 };
 const KPI_FMT = [v => eur(v), v => fr(v, 1), v => fr(v, 0), v => eur(v), v => fr(v, 1), v => eur(v, 4),
                  v => fr(v, 0), v => fr(v, 0), v => fr(v, 1)];
 const TRANCHES = ["Bleu HC", "Bleu HP", "Blanc HC", "Blanc HP", "Rouge HC", "Rouge HP"];
-const TRANCHE_COLORS = ["--bleu-hc", "--bleu", "--blanc-hc", "--blanc", "--rouge-hc", "--rouge"];
+// Une teinte par couleur de jour ; HC en aplat, HP en hachures (tranches d'indice impair)
+const TRANCHE_COLORS = ["--bleu", "--bleu", "--blanc", "--blanc", "--rouge", "--rouge"];
+const isHP = i => i % 2 === 1;
+const HATCH_ALPHA = .3;
+// #rrggbb → rgba() avec l'opacité voulue (fond entre les hachures)
+const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${n >> 8 & 255},${n & 255},${a})`; };
+// Motif hachuré pour Chart.js : fond atténué et rayures à 45° de la couleur pleine
+function hatch(color) {
+  const r = devicePixelRatio || 1, size = 8, c = document.createElement("canvas");
+  c.width = c.height = size * r;
+  const g = c.getContext("2d");
+  g.scale(r, r); g.fillStyle = rgba(color, HATCH_ALPHA); g.fillRect(0, 0, size, size);
+  g.strokeStyle = color; g.lineWidth = 2.5; g.lineCap = "square"; g.beginPath();
+  for (const o of [-size, 0, size]) { g.moveTo(o, size); g.lineTo(o + size, 0); }
+  g.stroke();
+  // Le canvas de Chart.js est déjà mis à l'échelle de la densité : on ramène le motif à sa taille en px CSS
+  const pat = g.createPattern(c, "repeat"); pat.setTransform(new DOMMatrix([1 / r, 0, 0, 1 / r, 0, 0]));
+  return pat;
+}
+// Remplissage CSS d'une tranche (barres de répartition)
+const trancheFill = i => { const c = css(TRANCHE_COLORS[i]);
+  return isHP(i) ? `repeating-linear-gradient(135deg, ${c} 0 2px, ${rgba(c, HATCH_ALPHA)} 2px 4.5px)` : c; };
 const QUOTA = { BLEU: "Bleus", BLANC: "Blancs", ROUGE: "Rouges" };
 let data = null, charts = {}, currentTab = "charges", view = null;
 const openCurves = new Set();  // recharges dépliées, conservées d'un rendu à l'autre
@@ -378,9 +399,10 @@ function renderCharts() {
   document.getElementById("tranchesChart").parentElement.hidden = total === 0;
   if (total > 0) chart("tranchesChart", {
     type: "doughnut",
-    data: { labels: TRANCHES, datasets: [{ data: tr, backgroundColor: TRANCHE_COLORS.map(css), borderWidth: 0 }] },
+    data: { labels: TRANCHES, datasets: [{ data: tr, backgroundColor: TRANCHE_COLORS.map((v, i) => isHP(i) ? hatch(css(v)) : css(v)),
+      borderColor: TRANCHE_COLORS.map(css), borderWidth: TRANCHES.map((_, i) => isHP(i) ? 1.5 : 0) }] },
     options: { maintainAspectRatio: false, cutout: "62%",
-      plugins: { legend: { position: "bottom", labels: { boxWidth: 10 } },
+      plugins: { legend: { position: "bottom", labels: { boxWidth: 14, boxHeight: 14 } },
                  tooltip: { callbacks: { label: c => `${c.label} : ${fr(c.raw, 1)} kWh (${fr(100 * c.raw / total, 0)} %)` } } } },
   });
 }
@@ -510,7 +532,7 @@ const monthHead = (m, title) => `<tr class="fold month-row" data-month="${m}" ar
 // Barre de répartition HC/HP à partir des kWh des 6 tranches
 function slotBar(parts) {
   const total = parts.reduce((a, b) => a + (b || 0), 0) || 1;
-  return `<div class="bar">${parts.map((p, i) => p > 0 ? `<span style="width:${100 * p / total}%;background:${css(TRANCHE_COLORS[i])}" title="${TRANCHES[i]} : ${fr(p, 2)} kWh"></span>` : "").join("")}</div>`;
+  return `<div class="bar">${parts.map((p, i) => p > 0 ? `<span style="width:${100 * p / total}%;background:${trancheFill(i)}" title="${TRANCHES[i]} : ${fr(p, 2)} kWh"></span>` : "").join("")}</div>`;
 }
 
 // Carburants de référence (PETROL_FUELS) dont la consommation est connue ; couleur et libellés par carburant
