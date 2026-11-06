@@ -118,6 +118,7 @@ RANGES = {
     "trips": ("Trajets!A1:H", (1, 2)),
     "colors": ("'Couleurs Tempo'!A1:B", (0,)),
     "settings": ("'Paramètres'!B10:B12", ()),
+    "tempo_grid": ("'Paramètres'!A4:G8", (0,)),
 }
 
 log = logging.getLogger("ev-dashboard")
@@ -194,6 +195,10 @@ def shape(raw):
         # Paramètres!B10:B12 : début HC (h), fin HC (h), coefficient de pertes
         "hc_hours": [setting(raw, 0, 22), setting(raw, 1, 6)],
         "loss_coef": setting(raw, 2, 1),
+        # Paramètres!A4:G8 : grille Tempo, une ligne par date d'effet (prix HC/HP de chaque couleur)
+        "tempo_prices": [{"since": r[0][:10], "bleu": r[1:3], "blanc": r[3:5], "rouge": r[5:7]}
+                         for r in raw["tempo_grid"] if len(r) >= 7 and isinstance(r[0], str)
+                         and all(isinstance(v, (int, float)) for v in r[1:7])],
     }
 
 

@@ -119,6 +119,7 @@ data = {
     "trips": {"headers": [], "rows": trips},
     "colors": [{"day": d.isoformat(), "color": c_} for d, c_ in colors.items()],
     "hc_hours": [22, 6], "loss_coef": LOSS, "fetched_at": now,
+    "tempo_prices": [{"since": "2026-08-01", **{c.lower(): [PRICE[(c, "HC")], PRICE[(c, "HP")]] for c in ("BLEU", "BLANC", "ROUGE")}}],
     "season": {"periode": "2026-2027", "stats": {"periode": "2026-2027", "bissextile": False, "dernierJourInclus": "2026-11-05",
                "joursBleusConsommes": used["BLEU"], "joursBlancsConsommes": used["BLANC"], "joursRougesConsommes": used["ROUGE"],
                "joursBleusRestants": 300 - used["BLEU"], "joursBlancsRestants": 43 - used["BLANC"],
