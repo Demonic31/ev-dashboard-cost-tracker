@@ -165,22 +165,48 @@
   .kpi.main .value { color: var(--accent); }
   .offers { margin-bottom: 16px; }
   .offers.last { margin: 16px 0 0; }
-  .offer { display: grid; grid-template-columns: minmax(150px, 1.2fr) 2.2fr minmax(90px, auto) minmax(120px, auto);
+  .offer { display: grid; grid-template-columns: minmax(150px, 1.2fr) 2.2fr minmax(110px, auto) minmax(110px, auto);
            gap: 4px 14px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); }
   .offer:last-of-type { border-bottom: 0; }
-  .offer .name { font-weight: 600; } .offer .name small { display: block; color: var(--muted); font-weight: 400; font-size: .76rem; }
-  .offer .cost { text-align: right; font-weight: 650; font-variant-numeric: tabular-nums; }
-  .offer .delta { text-align: right; font-size: .82rem; font-variant-numeric: tabular-nums; }
+  .offer.sep { padding: 16px 0 4px; }
+  .offer:not(.sep) { margin-left: 1.25rem; }  /* lignes (et leur trait) décalées sous leur intertitre */
+  .offer.sep.first { padding-top: 0; }
+  .offer.sep > span { color: var(--muted); font-size: .8rem; font-weight: 600; }
+  .offer.sep > .cost, .offer.sep > .per100 { font-size: .76rem; font-weight: 400; }
+  .offer[title] { cursor: help; }
+  .offer .name { font-weight: 600; } .offer .name small { display: none; white-space: pre-line; color: var(--muted); font-weight: 400; font-size: .76rem; }
+  .offer.show .name small { display: block; }
+  .offer .cost, .offer .per100 { text-align: right; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .offer .per100 { font-weight: 500; }
+  .offer .delta { display: block; font-size: .76rem; font-weight: 400; color: var(--muted); }
   .offer .delta.up { color: var(--bad); } .offer .delta.down { color: var(--good); }
-  .offer.ref .name, .offer.ref .cost { color: var(--accent); }
+  .offer.ref .name, .offer.ref .cost, .offer.ref .per100 { color: var(--accent); }
+  .offer .badges { margin-left: 2px; }
+  .offer .badge { display: inline-block; margin-left: 4px; padding: 0 7px; border-radius: 9px; font-size: .68rem; font-weight: 600;
+                  vertical-align: 1px; white-space: nowrap; color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent);
+                  border: 1px solid color-mix(in srgb, var(--good) 40%, transparent); }
+  .offer .badge.cur { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+                      border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+  details.notes-fold { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--border); } details.notes-fold summary { font-size: .8rem; font-weight: 400; color: var(--muted); }
+  details.notes-fold[open] summary { margin-bottom: 0; } details.notes-fold .notes { margin-top: 6px; }
   .offer .track { height: 10px; border-radius: 5px; background: var(--border); overflow: hidden; }
   .offer .track span { display: block; height: 100%; border-radius: 5px; }
   .offer .missing { color: var(--muted); font-size: .82rem; grid-column: 2 / -1; }
   .notes { color: var(--muted); font-size: .76rem; margin: 10px 0 0; padding-left: 18px; }
   @media (max-width: 640px) {
-    .offer { grid-template-columns: 1fr auto; }
+    .offer { grid-template-columns: minmax(0, 1fr) 6.9em 7.4em; gap: 4px 10px; }  /* largeurs fixes : colonnes alignées d'une ligne à l'autre */
+    .offer .delta { font-size: .7rem; white-space: nowrap; }
     .offer .track { grid-column: 1 / -1; grid-row: 2; }
-    .offer .delta { grid-column: 2; }
+    .offer.sep .h-bar { display: none; }
+    /* nom et valeurs sur la 1re ligne, barre en 2e, détail de l'offre en 3e sur toute la largeur */
+    .offer .name { display: contents; }
+    .offer .nm { grid-column: 1; grid-row: 1; }
+    .offer .cost { grid-row: 1; grid-column: 2; } .offer .per100 { grid-row: 1; grid-column: 3; }
+    .offer.sep > span:first-child { white-space: nowrap; }
+    .offer .badges { grid-column: 1 / -1; grid-row: 3; margin: 0; }
+    .offer .badge { margin: 0 4px 0 0; }
+    .offer .name small { grid-column: 1 / -1; grid-row: 4; }
+    .offer .missing { grid-row: 1; }
   }
   .grid2 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 16px; }
   .grid2 > .card { display: flex; flex-direction: column; }
@@ -300,7 +326,7 @@
   </section>
 
   <section class="card offers last">
-    <h2>Comparatif des offres <small>même énergie, même kilométrage, sur la période</small></h2>
+    <h2>Comparatif offres ⚡ et ⛽</h2>
     <div id="offers"></div>
   </section>
 

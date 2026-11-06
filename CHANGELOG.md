@@ -4,6 +4,11 @@ Résumé de chaque version, affiché dans le dashboard (clic sur le numéro de v
 
 Format : un titre `## <version> — <AAAA-MM-JJ>` par version, puis des puces `- ` d'une ligne (`**gras**` et `` `code` `` acceptés).
 
+## 0.15.0 — 2026-11-06
+- **Comparatif des offres classé** du moins cher au plus cher, Tempo en tête, en deux groupes : ⚡ abonnements EDF et ⛽ équivalents thermiques ; badges « offre actuelle » et « la moins chère ».
+- **Écart avec Tempo sous chaque coût**, et nouvelle colonne **€/100 km** avec son écart.
+- **Tarifs en info-bulle** (ou d'un appui sur téléphone), dont la grille Tempo du Sheet par couleur ; méthode de calcul repliée.
+
 ## 0.14.1 — 2026-11-05
 - **Documentation** : captures d'écran du README à jour, et outil versionné pour les régénérer avec des données fictives.
 

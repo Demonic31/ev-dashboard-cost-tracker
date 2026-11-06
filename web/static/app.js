@@ -47,6 +47,7 @@ let data = null, charts = {}, currentTab = "charges", view = null;
 const openCurves = new Set();  // recharges dépliées, conservées d'un rendu à l'autre
 const openMonths = { charges: new Set(), trips: new Set() };  // mois dépliés, par tableau
 let seasonOpen = false;  // calendrier Tempo déplié
+let offerNotesOpen = false;  // méthode de calcul du comparatif dépliée
 
 // ------------------------------------------------------------------ période
 function seasonStart(d) { return new Date(d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1, 8, 1); }
@@ -334,6 +335,17 @@ function zenLowShare(r) {
   return n ? low / n : null;
 }
 
+// Tarif Tempo en vigueur à une date (dernière ligne de la grille du Sheet dont la date d'effet est passée) :
+// une ligne par couleur, HP puis HC
+function tempoPrices(day) {
+  const grid = (data.tempo_prices || []).filter(g => !day || g.since <= day), g = grid[grid.length - 1];
+  if (!g) return "ton contrat (prix de la grille Tempo du Sheet)";
+  const [hcS, hcE] = data.hc_hours, p = v => fr(v, 4);
+  return [["🔵", g.bleu], ["⚪", g.blanc], ["🔴", g.rouge]]
+    .map(([dot, [hc, hp]]) => `${dot} HP ${p(hp)} · HC ${hcS}h–${hcE}h ${p(hc)} €/kWh`).join("\n") +
+    `\nTarif en vigueur depuis le ${dshort(g.since)}`;
+}
+
 function renderOffers() {
   const o = data.offers || {}, coef = num(data.loss_coef || 1), rows = view.charges;
   const hcKwh = rows.reduce((s, r) => s + num(r[C.slots]) + num(r[C.slots + 2]) + num(r[C.slots + 4]), 0) * coef;
@@ -342,43 +354,71 @@ function renderOffers() {
   const odoKm = num(view.kpi[2]), tripKm = num(view.kpi[7]), km = Math.max(odoKm, tripKm), [hcS, hcE] = data.hc_hours;
   const kmSource = !km ? "aucun trajet ni relevé compteur" : tripKm >= odoKm ? "trajets enregistrés" : "compteur entre recharges";
   const hcLabel = `HC ${hcS}h–${hcE}h`;
-  const list = [{ name: "Tempo", sub: "ton contrat (Sheet)", cost: view.cost, color: "--accent", ref: true }];
-  list.push(o.base ? { name: "Base", sub: `${fr(o.base, 4)} €/kWh`, cost: view.kwh * o.base, color: "--base" }
-                   : { name: "Base", missing: "BASE_PRICE_KWH" });
+  // €/100 km : Tempo = indicateur du Sheet ; offres électriques au même kilométrage (au prorata du coût) ;
+  // carburants = L/100 km × prix moyen, indépendant du kilométrage
+  const ref = view.cost, ref100 = typeof view.kpi[3] === "number" ? view.kpi[3] : null;
+  const elec100 = cost => ref100 != null && ref ? ref100 * cost / ref : null;
+  const list = [{ name: "Tempo", sub: tempoPrices(view.to), cost: ref, per100: ref100, color: "--accent", group: "ref" }];
+  const elec = (name, sub, cost, color) => ({ name, sub, cost, per100: elec100(cost), color, group: "elec" });
+  list.push(o.base ? elec("Base", `${fr(o.base, 4)} €/kWh`, view.kwh * o.base, "--base")
+                   : { name: "Base", missing: "BASE_PRICE_KWH", group: "elec" });
   list.push(o.hchp?.hc && o.hchp?.hp
-    ? { name: "Heures creuses", sub: `${hcLabel} ${fr(o.hchp.hc, 4)} · HP ${fr(o.hchp.hp, 4)} €/kWh`,
-        cost: hcKwh * o.hchp.hc + hpKwh * o.hchp.hp, color: "--bleu" }
-    : { name: "Heures creuses", missing: "HCHP_HC_PRICE_KWH / HCHP_HP_PRICE_KWH" });
+    ? elec("Heures creuses", `HP ${fr(o.hchp.hp, 4)} · ${hcLabel} ${fr(o.hchp.hc, 4)} €/kWh`,
+           hcKwh * o.hchp.hc + hpKwh * o.hchp.hp, "--bleu")
+    : { name: "Heures creuses", missing: "HCHP_HC_PRICE_KWH / HCHP_HP_PRICE_KWH", group: "elec" });
   if (o.zen?.low && o.zen?.high) {
-    let cost = 0, lowKwh = 0;
+    let cost = 0;
     rows.forEach(r => { const share = zenLowShare(r) ?? 1, kwh = num(r[C.kwh]);
-      lowKwh += kwh * share; cost += kwh * (share * o.zen.low + (1 - share) * o.zen.high); });
-    list.push({ name: "Zen Week-End + HC", sub: `WE, fériés et ${hcLabel} ${fr(o.zen.low, 4)} · semaine HP ${fr(o.zen.high, 4)} €/kWh` +
-      (view.kwh ? ` · ${fr(100 * lowKwh / view.kwh, 0)} % au prix bas` : ""), cost, color: "--blanc-hc" });
-  } else list.push({ name: "Zen Week-End + HC", missing: "ZEN_LOW_PRICE_KWH / ZEN_HIGH_PRICE_KWH" });
+      cost += kwh * (share * o.zen.low + (1 - share) * o.zen.high); });
+    list.push(elec("Zen Week-End + HC", `💼 Semaine HP ${fr(o.zen.high, 4)} · ${hcLabel} ${fr(o.zen.low, 4)} €/kWh` +
+      `\n🏖️ Week-end et jours fériés ${fr(o.zen.low, 4)} €/kWh toute la journée`, cost, "--blanc-hc"));
+  } else list.push({ name: "Zen Week-End + HC", missing: "ZEN_LOW_PRICE_KWH / ZEN_HIGH_PRICE_KWH", group: "elec" });
   (o.fuels?.length ? o.fuels : [{ key: "sp98", name: "SP98" }]).forEach(f => {
     const cur = f.current, color = f.key === "gazole" ? "--diesel" : "--petrol";
     if (num(f.l100) && cur && !cur.error)
       list.push({ name: fuelLabel(f), sub: `${fr(f.l100, 1)} L/100 km × ${fr(cur.price, 3)} €/L (moyenne ${cur.zone}, ` +
         `${cur.stations} stations, ${cur.days} derniers jours, relevé le ${new Date(cur.fetched_at).toLocaleDateString("fr-FR")})`,
-        cost: km * f.l100 / 100 * cur.price, color });
+        cost: km * f.l100 / 100 * cur.price, per100: f.l100 * cur.price, color, group: "fuel" });
     else list.push({ name: fuelLabel(f), missing: cur?.error ? "prix carburant indisponible : " + cur.error
-      : `la consommation dans PETROL_FUELS (ex. ${f.key}:${f.key === "gazole" ? "5.5" : "7"})`, raw: !!cur?.error });
+      : `la consommation dans PETROL_FUELS (ex. ${f.key}:${f.key === "gazole" ? "5.5" : "7"})`, raw: !!cur?.error, group: "fuel" });
   });
 
-  const max = Math.max(...list.map(x => x.cost || 0)) || 1, ref = view.cost;
-  document.getElementById("offers").innerHTML = list.map(x => {
-    if (x.missing) return `<div class="offer"><div class="name">${x.name}</div><div class="missing">${x.raw ? esc(x.missing) : `Renseigner ${esc(x.missing)} dans .env`}</div></div>`;
-    const d = x.cost - ref, pct = ref ? 100 * d / ref : 0;
-    return `<div class="offer${x.ref ? " ref" : ""}"><div class="name">${x.name}<small>${esc(x.sub)}</small></div>
+  // Tempo en tête, puis chaque groupe du moins cher au plus cher (tri stable : ordre d'origine en cas d'égalité),
+  // les offres à renseigner en fin de groupe
+  const byCost = (a, b) => (a.missing ? 1 : 0) - (b.missing ? 1 : 0) || (a.missing ? 0 : a.cost - b.cost);
+  const group = g => list.filter(x => x.group === g).sort(byCost);
+  const elecs = [list[0], ...group("elec")], fuelsSorted = group("fuel");
+  const priced = elecs.filter(x => !x.missing);
+  const cheapest = priced.length > 1 ? priced.reduce((a, b) => b.cost < a.cost - 0.005 ? b : a) : null;
+
+  const max = Math.max(...list.map(x => x.cost || 0)) || 1;
+  const delta = (v, r) => {
+    if (v == null || r == null) return "";
+    const d = v - r, pct = r ? 100 * d / r : 0, s = d >= 0 ? "+" : "−";
+    return `<small class="delta ${d > 0.005 ? "up" : d < -0.005 ? "down" : ""}">${s}${eur(Math.abs(d))} (${s}${fr(Math.abs(pct), 0)} %)</small>`;
+  };
+  const line = x => {
+    if (x.missing) return `<div class="offer"><div class="name"><span class="nm">${x.name}</span></div><div class="missing">${x.raw ? esc(x.missing) : `Renseigner ${esc(x.missing)} dans .env`}</div></div>`;
+    const isRef = x.group === "ref";
+    const badge = (isRef ? `<span class="badge cur" title="Ton abonnement actuel, référence des écarts">offre actuelle</span>` : "") +
+      (x === cheapest ? `<span class="badge" title="Offre d'électricité la moins chère sur la période">la moins chère</span>` : "");
+    // détail du tarif en info-bulle au survol, ou affiché sous le nom d'un appui sur la ligne (écrans tactiles)
+    return `<div class="offer${isRef ? " ref" : ""}" title="${esc(x.sub)}"><div class="name"><span class="nm">${x.name}</span>${badge && `<span class="badges">${badge}</span>`}<small>${esc(x.sub)}</small></div>
       <div class="track"><span style="width:${100 * x.cost / max}%;background:${css(x.color)}"></span></div>
-      <div class="cost">${eur(x.cost)}</div>
-      <div class="delta ${x.ref ? "" : d > 0.005 ? "up" : d < -0.005 ? "down" : ""}">${x.ref ? (view.kpi[3] !== "" ? eur(view.kpi[3]) + " /100 km" : "")
-        : `${d >= 0 ? "+" : "−"}${eur(Math.abs(d))} (${d >= 0 ? "+" : "−"}${fr(Math.abs(pct), 0)} %)`}</div></div>`;
-  }).join("") + `<ul class="notes">
-    <li>Coût de l'énergie seule (kWh facturés = kWh batterie × ${fr(coef, 2)}), abonnements non compris.</li>
+      <div class="cost">${eur(x.cost)}${isRef ? "" : delta(x.cost, ref)}</div>
+      <div class="per100">${x.per100 == null ? "–" : eur(x.per100)}${isRef ? "" : delta(x.per100, ref100)}</div></div>`;
+  };
+  const el = document.getElementById("offers");
+  el.innerHTML =
+    `<div class="offer sep first"><span>⚡ Abonnements EDF</span><span class="h-bar"></span><span class="cost">Coût</span><span class="per100">€/100 km</span></div>` +
+    elecs.map(line).join("") + `<div class="offer sep"><span>⛽ Équivalents thermiques</span></div>` + fuelsSorted.map(line).join("") +
+    `<details class="cal notes-fold"${offerNotesOpen ? " open" : ""}><summary><span class="chev">▸</span> Méthode de calcul</summary><ul class="notes">
+    <li>Coût de l'énergie seule (kWh facturés = kWh batterie × ${fr(coef, 2)}), abonnements non compris ; écarts calculés par rapport à Tempo.</li>
     <li>Heures creuses et Zen supposent les mêmes heures creuses que Tempo (${hcLabel}, onglet Paramètres) ; Zen est réparti au prorata du temps de charge.</li>
-    <li>Carburants : ${fr(km, 0)} km parcourus sur la période (${kmSource}) ; prix moyen du carburant relu chaque jour.</li></ul>`;
+    <li>€/100 km : Tempo selon l'indicateur du Sheet (km compteur entre recharges) ; les autres offres d'électricité au même kilométrage ; carburants = consommation × prix moyen.</li>
+    <li>Coût des carburants : ${fr(km, 0)} km parcourus sur la période (${kmSource}) ; prix moyen du carburant relu chaque jour.</li></ul></details>`;
+  el.querySelector("details").addEventListener("toggle", e => { offerNotesOpen = e.target.open; });
+  el.onclick = e => { const row = e.target.closest(".offer[title]"); if (row) row.classList.toggle("show"); };
 }
 
 // ------------------------------------------------------------------ graphiques
