@@ -321,19 +321,28 @@ function isHoliday(d) {
   return holidays[y].has(iso(d));
 }
 
-// Part de la durée d'une charge en prix « bas » Zen Week-End + HC : week-end, jour férié ou heures creuses en semaine
-function zenLowShare(r) {
+// Part du temps de charge passée au prix bas (échantillon toutes les 5 min), null sans heure de fin
+function lowShare(r, isLow) {
   const start = new Date(r[C.start]), end = new Date(r[2]);
   if (!(end > start)) return null;
-  const [hcStart, hcEnd] = data.hc_hours.map(Number), step = 5 * 60e3;
+  const step = 5 * 60e3;
   let low = 0, n = 0;
-  for (let t = start.getTime() + step / 2; t < end.getTime(); t += step, n++) {
-    const d = new Date(t), hour = d.getHours() + d.getMinutes() / 60;
-    const hc = hcStart > hcEnd ? hour >= hcStart || hour < hcEnd : hour >= hcStart && hour < hcEnd;
-    if (hc || d.getDay() === 0 || d.getDay() === 6 || isHoliday(d)) low++;
-  }
+  for (let t = start.getTime() + step / 2; t < end.getTime(); t += step, n++) if (isLow(new Date(t))) low++;
   return n ? low / n : null;
 }
+const hourOf = d => d.getHours() + d.getMinutes() / 60;
+const inHours = (h, [a, b]) => a > b ? h >= a || h < b : h >= a && h < b;
+// Zen Week-End + HC : prix bas le week-end, les jours fériés et en heures creuses (celles de Tempo) en semaine
+const zenLowShare = r => lowShare(r, d => inHours(hourOf(d), data.hc_hours.map(Number)) ||
+                                       d.getDay() === 0 || d.getDay() === 6 || isHoliday(d));
+// Option Heures creuses, plages saisonnalisées (Enedis, déploiement fin 2025 – 2027 ; 8 h de HC par jour).
+// Plages réelles fixées pour chaque compteur Linky : on retient 23h–7h l'hiver, et l'été 5 h la nuit (1h–6h)
+// plus 3 h l'après-midi (placées dans la fenêtre 11h–17h, sans effet sur des recharges de nuit).
+const HCHP_SEASONS = { winter: { emoji: "❄️", months: "nov.–mars", hours: [[23, 7]] },
+                       summer: { emoji: "☀️", months: "avr.–oct.", hours: [[1, 6], [13, 16]] } };
+const hchpSeason = d => d.getMonth() >= 3 && d.getMonth() <= 9 ? HCHP_SEASONS.summer : HCHP_SEASONS.winter;
+const hchpLow = d => hchpSeason(d).hours.some(h => inHours(hourOf(d), h));
+const hoursLabel = hours => hours.map(([a, b]) => `${a}h–${b % 24}h`).join(", ").replace(/, ([^,]*)$/, " et $1");
 
 // Tarif Tempo en vigueur à une date (dernière ligne de la grille du Sheet dont la date d'effet est passée) :
 // une ligne par couleur, HP puis HC
@@ -348,8 +357,15 @@ function tempoPrices(day) {
 
 function renderOffers() {
   const o = data.offers || {}, coef = num(data.loss_coef || 1), rows = view.charges;
-  const hcKwh = rows.reduce((s, r) => s + num(r[C.slots]) + num(r[C.slots + 2]) + num(r[C.slots + 4]), 0) * coef;
-  const hpKwh = rows.reduce((s, r) => s + num(r[C.slots + 1]) + num(r[C.slots + 3]) + num(r[C.slots + 5]), 0) * coef;
+  // kWh facturés de chaque recharge répartis entre HC et HP de l'option Heures creuses (au prorata du temps de charge ;
+  // sans heure de fin, répartition HC/HP Tempo de la recharge)
+  let hcKwh = 0, hpKwh = 0;
+  rows.forEach(r => {
+    const kwh = [0, 1, 2, 3, 4, 5].reduce((s, i) => s + num(r[C.slots + i]), 0) * coef;
+    const tempoHc = num(r[C.slots]) + num(r[C.slots + 2]) + num(r[C.slots + 4]);
+    const share = lowShare(r, hchpLow) ?? (kwh ? tempoHc * coef / kwh : 0);
+    hcKwh += kwh * share; hpKwh += kwh * (1 - share);
+  });
   // km de l'équivalent essence : trajets enregistrés ou compteur entre recharges, le plus grand des deux
   const odoKm = num(view.kpi[2]), tripKm = num(view.kpi[7]), km = Math.max(odoKm, tripKm), [hcS, hcE] = data.hc_hours;
   const kmSource = !km ? "aucun trajet ni relevé compteur" : tripKm >= odoKm ? "trajets enregistrés" : "compteur entre recharges";
@@ -363,7 +379,10 @@ function renderOffers() {
   list.push(o.base ? elec("Base", `${fr(o.base, 4)} €/kWh`, view.kwh * o.base, "--base")
                    : { name: "Base", missing: "BASE_PRICE_KWH", group: "elec" });
   list.push(o.hchp?.hc && o.hchp?.hp
-    ? elec("Heures creuses", `HP ${fr(o.hchp.hp, 4)} · ${hcLabel} ${fr(o.hchp.hc, 4)} €/kWh`,
+    ? elec("Heures creuses", Object.values(HCHP_SEASONS).reverse().map(z =>
+             `${z.emoji} ${z.months} HP ${fr(o.hchp.hp, 4)} · HC ${hoursLabel(z.hours)} ${fr(o.hchp.hc, 4)} €/kWh`).join("\n") +
+           (hcKwh + hpKwh ? `\n${fr(100 * hcKwh / (hcKwh + hpKwh), 0)} % en heures creuses sur la période` : "") +
+           "\nPlages indicatives : les heures creuses sont fixées par Enedis pour chaque compteur Linky (voir Méthode de calcul)",
            hcKwh * o.hchp.hc + hpKwh * o.hchp.hp, "--bleu")
     : { name: "Heures creuses", missing: "HCHP_HC_PRICE_KWH / HCHP_HP_PRICE_KWH", group: "elec" });
   if (o.zen?.low && o.zen?.high) {
@@ -414,7 +433,12 @@ function renderOffers() {
     elecs.map(line).join("") + `<div class="offer sep"><span>⛽ Équivalents thermiques</span></div>` + fuelsSorted.map(line).join("") +
     `<details class="cal notes-fold"${offerNotesOpen ? " open" : ""}><summary><span class="chev">▸</span> Méthode de calcul</summary><ul class="notes">
     <li>Coût de l'énergie seule (kWh facturés = kWh batterie × ${fr(coef, 2)}), abonnements non compris ; écarts calculés par rapport à Tempo.</li>
-    <li>Heures creuses et Zen supposent les mêmes heures creuses que Tempo (${hcLabel}, onglet Paramètres) ; Zen est réparti au prorata du temps de charge.</li>
+    <li>Heures creuses : nouvelles plages saisonnalisées, déployées par Enedis de fin 2025 à 2027 (8 h creuses par jour, mêmes prix été comme hiver).
+      Plages retenues ici : hiver (nov.–mars) ${hoursLabel(HCHP_SEASONS.winter.hours)} ; été (avr.–oct.) ${hoursLabel(HCHP_SEASONS.summer.hours)},
+      les 3 h de l'après-midi placées arbitrairement dans la fenêtre 11h–17h, sans effet sur des recharges de nuit.
+      Les heures creuses réelles sont fixées par Enedis pour chaque compteur Linky et diffèrent d'un logement à l'autre : le résultat reste une estimation.</li>
+    <li>Zen suppose les mêmes heures creuses que Tempo (${hcLabel}, onglet Paramètres).</li>
+    <li>Heures creuses et Zen sont répartis au prorata du temps de charge.</li>
     <li>€/100 km : Tempo selon l'indicateur du Sheet (km compteur entre recharges) ; les autres offres d'électricité au même kilométrage ; carburants = consommation × prix moyen.</li>
     <li>Coût des carburants : ${fr(km, 0)} km parcourus sur la période (${kmSource}) ; prix moyen du carburant relu chaque jour.</li></ul></details>`;
   el.querySelector("details").addEventListener("toggle", e => { offerNotesOpen = e.target.open; });
