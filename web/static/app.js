@@ -163,6 +163,10 @@ function renderSources() {
     item("Google Sheet", "calcul des coûts (recharges, trajets, indicateurs, totaux par mois)", data.fetched_at ? `relu le ${stamp(data.fetched_at)}` : ""),
     item(`Tempo : ${link("https://www.api-couleur-tempo.fr", "api-couleur-tempo.fr")}`, "couleur des jours et saison Tempo",
       data.season?.fetched_at ? `relu le ${stamp(data.season.fetched_at)}` : ""),
+    data.offers?.flex_days ? item(`Zen Flex : ${link("https://particulier.edf.fr/fr/accueil/electricite-gaz/zen-flex.html", "particulier.edf.fr")}`,
+      "calendrier des jours Éco, Sobriété et Bonus (API du site EDF, non documentée)",
+      data.offers.flex_days.fetched_at ? `relu le ${stamp(data.offers.flex_days.fetched_at)} (${Object.keys(data.offers.flex_days.days).length} jours connus)`
+        : esc(data.offers.flex_days.error || "")) : "",
     item(`Carburants : ${link("https://www.prix-carburants.gouv.fr/rubrique/opendata/", "prix-carburants.gouv.fr")}`,
       "prix moyens du jour et archives journalières officielles" + (days ? ` (${days} jour${days > 1 ? "s" : ""} de recharge)` : ""), ...fuelLines),
   ].join("");
@@ -332,9 +336,6 @@ function lowShare(r, isLow) {
 }
 const hourOf = d => d.getHours() + d.getMinutes() / 60;
 const inHours = (h, [a, b]) => a > b ? h >= a || h < b : h >= a && h < b;
-// Zen Week-End + HC : prix bas le week-end, les jours fériés et en heures creuses (celles de Tempo) en semaine
-const zenLowShare = r => lowShare(r, d => inHours(hourOf(d), data.hc_hours.map(Number)) ||
-                                       d.getDay() === 0 || d.getDay() === 6 || isHoliday(d));
 // Option Heures creuses, plages saisonnalisées (Enedis, déploiement fin 2025 – 2027 ; 8 h de HC par jour).
 // Plages réelles fixées pour chaque compteur Linky : on retient 23h–7h l'hiver, et l'été 5 h la nuit (1h–6h)
 // plus 3 h l'après-midi (placées dans la fenêtre 11h–17h, sans effet sur des recharges de nuit).
@@ -343,6 +344,24 @@ const HCHP_SEASONS = { winter: { emoji: "❄️", months: "nov.–mars", hours: 
 const hchpSeason = d => d.getMonth() >= 3 && d.getMonth() <= 9 ? HCHP_SEASONS.summer : HCHP_SEASONS.winter;
 const hchpLow = d => hchpSeason(d).hours.some(h => inHours(hourOf(d), h));
 const hoursLabel = hours => hours.map(([a, b]) => `${a}h–${b % 24}h`).join(", ").replace(/, ([^,]*)$/, " et $1");
+// Zen Flex : mêmes plages tous les jours (HP 8h–13h et 18h–20h, 17 h creuses) ; 20 jours Sobriété par an en semaine,
+// annoncés la veille. Calendrier lu par le serveur dans l'API EDF (offers.flex_days : {jour: eco|sobriete|bonus}) ;
+// un jour Sobriété n'est possible qu'en semaine, du 15 octobre au 15 avril ; un jour possible pas encore relu est
+// approché par la couleur Tempo (Rouge = Sobriété)
+const FLEX_HC = [[0, 8], [13, 18], [20, 24]];
+const flexHc = d => FLEX_HC.some(h => inHours(hourOf(d), h));
+const flexPossible = day => { const d = new Date(day + "T12:00:00"), md = day.slice(5);
+  return d.getDay() % 6 !== 0 && !isHoliday(d) && (md <= "04-15" || md >= "10-15"); };
+function flexSobriety() {
+  const known = data.offers?.flex_days?.days || {};
+  const red = new Set((data.colors || []).filter(c => c.color === "ROUGE").map(c => c.day));
+  const guessed = new Set();  // jours approchés par Tempo
+  return { guessed, isSob: day => {
+    if (!flexPossible(day)) return false;
+    if (day in known) return known[day] === "sobriete";
+    guessed.add(day); return red.has(day);
+  } };
+}
 
 // Tarif Tempo en vigueur à une date (dernière ligne de la grille du Sheet dont la date d'effet est passée) :
 // une ligne par couleur, HP puis HC
@@ -385,13 +404,58 @@ function renderOffers() {
            "\nPlages indicatives : les heures creuses sont fixées par Enedis pour chaque compteur Linky (voir Méthode de calcul)",
            hcKwh * o.hchp.hc + hpKwh * o.hchp.hp, "--bleu")
     : { name: "Heures creuses", missing: "HCHP_HC_PRICE_KWH / HCHP_HP_PRICE_KWH", group: "elec" });
+  // part de chaque catégorie d'une offre sur la période, en %, catégories vides omises
+  const split = (kwh, labels) => { const tot = kwh.reduce((a, b) => a + b, 0);
+    return tot ? "\n" + labels.map((l, i) => [Math.round(100 * kwh[i] / tot), l]).filter(([p]) => p)
+      .map(([p, l]) => `${p} % ${l}`).join(", ") + " sur la période" : ""; };
   if (o.zen?.low && o.zen?.high) {
-    let cost = 0;
-    rows.forEach(r => { const share = zenLowShare(r) ?? 1, kwh = num(r[C.kwh]);
-      cost += kwh * (share * o.zen.low + (1 - share) * o.zen.high); });
+    // kWh facturés répartis au prorata du temps de charge : semaine HC, week-end ou férié, semaine HP ;
+    // sans heure de fin, jour de début et tranches HC/HP Tempo de la recharge
+    const zk = [0, 0, 0];
+    rows.forEach(r => {
+      const kwh = num(r[C.kwh]), w = [0, 0, 0], start = new Date(r[C.start]), end = new Date(r[2]), step = 5 * 60e3;
+      if (end > start) for (let t = start.getTime() + step / 2; t < end.getTime(); t += step) {
+        const d = new Date(t);
+        w[d.getDay() % 6 === 0 || isHoliday(d) ? 1 : inHours(hourOf(d), data.hc_hours.map(Number)) ? 0 : 2]++;
+      }
+      const n = w[0] + w[1] + w[2], bat = [0, 1, 2, 3, 4, 5].reduce((a, i) => a + num(r[C.slots + i]), 0);
+      const hc = bat ? (num(r[C.slots]) + num(r[C.slots + 2]) + num(r[C.slots + 4])) / bat : 1;
+      const f = n ? w.map(x => x / n) : start.getDay() % 6 === 0 || isHoliday(start) ? [0, 1, 0] : [hc, 0, 1 - hc];
+      f.forEach((x, i) => { zk[i] += kwh * x; });
+    });
     list.push(elec("Zen Week-End + HC", `💼 Semaine HP ${fr(o.zen.high, 4)} · ${hcLabel} ${fr(o.zen.low, 4)} €/kWh` +
-      `\n🏖️ Week-end et jours fériés ${fr(o.zen.low, 4)} €/kWh toute la journée`, cost, "--blanc-hc"));
+      `\n🏖️ Week-end et jours fériés ${fr(o.zen.low, 4)} €/kWh toute la journée` +
+      split(zk, ["en heures creuses", "le week-end ou un jour férié", "en heures pleines"]),
+      (zk[0] + zk[1]) * o.zen.low + zk[2] * o.zen.high, "--blanc-hc"));
   } else list.push({ name: "Zen Week-End + HC", missing: "ZEN_LOW_PRICE_KWH / ZEN_HIGH_PRICE_KWH", group: "elec" });
+  const fx = o.zen_flex;
+  if (fx && [...fx.eco, ...fx.sob].every(v => v)) {
+    // kWh facturés répartis au prorata du temps de charge entre HC/HP et jour Éco/Sobriété (5 min par 5 min) ;
+    // sans heure de fin, tranches Tempo de la recharge (Rouge = Sobriété)
+    const flex = flexSobriety();
+    let cost = 0;
+    const fk = [0, 0, 0, 0];
+    rows.forEach(r => {
+      const slots = [0, 1, 2, 3, 4, 5].map(i => num(r[C.slots + i]) * coef), kwh = slots.reduce((a, b) => a + b, 0);
+      const start = new Date(r[C.start]), end = new Date(r[2]), step = 5 * 60e3, w = [0, 0, 0, 0];  // éco HC/HP, sob HC/HP
+      if (end > start) for (let t = start.getTime() + step / 2; t < end.getTime(); t += step) {
+        const d = new Date(t), sob = flex.isSob(iso(d));
+        w[(sob ? 2 : 0) + (flexHc(d) ? 0 : 1)]++;
+      }
+      const n = w.reduce((a, b) => a + b, 0);
+      // sans heure de fin : tranches Tempo de la recharge, jour Sobriété selon le calendrier (Rouge sinon)
+      const sobDay = typeof r[C.start] === "string" && flex.isSob(r[C.start].slice(0, 10));
+      const k = n ? w.map(x => kwh * x / n) : sobDay ? [0, 0, slots[0] + slots[2] + slots[4], slots[1] + slots[3] + slots[5]]
+                                                  : [slots[0] + slots[2] + slots[4], slots[1] + slots[3] + slots[5], 0, 0];
+      cost += k[0] * fx.eco[0] + k[1] * fx.eco[1] + k[2] * fx.sob[0] + k[3] * fx.sob[1];
+      k.forEach((x, i) => { fk[i] += x; });
+    });
+    list.push(elec("Zen Flex", `🟢 Éco HP ${fr(fx.eco[1], 4)} · HC ${hoursLabel(FLEX_HC)} ${fr(fx.eco[0], 4)} €/kWh` +
+      `\n🟠 Sobriété HP ${fr(fx.sob[1], 4)} · HC ${fr(fx.sob[0], 4)} €/kWh` +
+      split(fk, ["en Éco HC", "en Éco HP", "en Sobriété HC", "en Sobriété HP"]) +
+      (flex.guessed.size ? `\nJours Sobriété : calendrier EDF, ${flex.guessed.size} jour(s) pas encore relu(s) approché(s) par Tempo (voir Méthode de calcul)`
+                         : "\nJours Sobriété : calendrier EDF (voir Méthode de calcul)"), cost, "--flex"));
+  } else list.push({ name: "Zen Flex", missing: "ZEN_FLEX_ECO_HC_PRICE_KWH / ZEN_FLEX_ECO_HP_PRICE_KWH / ZEN_FLEX_SOB_HC_PRICE_KWH / ZEN_FLEX_SOB_HP_PRICE_KWH", group: "elec" });
   (o.fuels?.length ? o.fuels : [{ key: "sp98", name: "SP98" }]).forEach(f => {
     const cur = f.current, color = f.key === "gazole" ? "--diesel" : "--petrol";
     if (num(f.l100) && cur && !cur.error)
@@ -438,7 +502,10 @@ function renderOffers() {
       les 3 h de l'après-midi placées arbitrairement dans la fenêtre 11h–17h, sans effet sur des recharges de nuit.
       Les heures creuses réelles sont fixées par Enedis pour chaque compteur Linky et diffèrent d'un logement à l'autre : le résultat reste une estimation.</li>
     <li>Zen suppose les mêmes heures creuses que Tempo (${hcLabel}, onglet Paramètres).</li>
-    <li>Heures creuses et Zen sont répartis au prorata du temps de charge.</li>
+    <li>Zen Flex : 17 h creuses par jour (HP 8h–13h et 18h–20h), et 20 jours Sobriété par an en semaine, de mi-octobre à mi-avril, annoncés la veille par EDF.
+      Leur calendrier est lu dans l'API du site EDF (non documentée, susceptible de changer) et gardé en cache ;
+      un jour pas encore relu est approché par la couleur Tempo (Rouge = Sobriété).</li>
+    <li>Heures creuses, Zen et Zen Flex sont répartis au prorata du temps de charge.</li>
     <li>€/100 km : Tempo selon l'indicateur du Sheet (km compteur entre recharges) ; les autres offres d'électricité au même kilométrage ; carburants = consommation × prix moyen.</li>
     <li>Coût des carburants : ${fr(km, 0)} km parcourus sur la période (${kmSource}) ; prix moyen du carburant relu chaque jour.</li></ul></details>`;
   el.querySelector("details").addEventListener("toggle", e => { offerNotesOpen = e.target.open; });

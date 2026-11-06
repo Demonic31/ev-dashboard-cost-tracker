@@ -231,6 +231,107 @@ class TempoSeason:
             return {"error": str(exc)}
 
 
+# Calendrier Zen Flex : API (non documentée) du site particulier.edf.fr, jour J et J+1 pour une date donnée ;
+# urlPlaasmaCommerce est obligatoire (sans lui, page d'erreur HTML). Historique disponible depuis le lancement.
+ZEN_FLEX_API = "https://particulier.edf.fr/services/rest/opm/getOPMStatut"
+ZEN_FLEX_CODES = {"RAS": "eco", "ZENF_PM": "sobriete", "ZENF_BONIF": "bonus", "ZENF_BONUS": "bonus"}
+ZEN_FLEX_START = date(2023, 11, 1)
+
+
+def flex_candidate(day):
+    """Jour où un jour Sobriété est possible : en semaine, du 1er janvier au 15 avril ou du 15 octobre au 31 décembre."""
+    return day.weekday() < 5 and (day.month < 4 or (day.month == 4 and day.day <= 15)
+                                  or (day.month == 10 and day.day >= 15) or day.month > 10)
+
+
+class FlexDays:
+    """Type de chaque jour de l'option Zen Flex (eco, sobriete, bonus), lu dans l'API EDF.
+
+    Une tâche de fond relit toutes les 10 minutes J et J+1 (publié dans la journée), puis rattrape au plus 30 jours
+    manquants de l'historique, du plus récent au plus ancien, une requête par seconde ; seuls les jours où un jour
+    Sobriété est possible sont demandés (les autres sont Éco par règle). Les jours lus sont gardés dans
+    DATA_DIR/zen-flex-days.json ({jour: type}), table qui passera telle quelle en SQLite. Une réponse qui n'est pas
+    du JSON (pare-feu EDF) ou un code inconnu ne sont jamais interprétés : le jour reste inconnu, et la page se rabat
+    sur les jours Rouges Tempo.
+    """
+
+    def __init__(self, data_dir, interval=600, batch=30):
+        self.file = os.path.join(data_dir, "zen-flex-days.json") if data_dir else None
+        self.days, self.error, self.fetched_at = {}, None, None
+        self.interval, self.batch, self.lock = interval, batch, threading.Lock()
+        self.http = requests.Session()
+        self.http.headers["Accept"] = "application/json"
+        if self.file and os.path.isfile(self.file):
+            try:
+                with open(self.file, encoding="utf-8") as f:
+                    self.days = json.load(f)
+                log.info("jours Zen Flex : %d jour(s) en cache", len(self.days))
+            except (OSError, ValueError) as exc:
+                log.warning("jours Zen Flex : cache illisible (%s)", exc)
+        threading.Thread(target=self.loop, daemon=True, name="zen-flex").start()
+
+    def fetch(self, day):
+        """{jour: type} pour `day` et le lendemain (lendemain absent tant qu'il n'est pas publié)."""
+        resp = self.http.get(ZEN_FLEX_API, timeout=20, params={
+            "dateRelevant": day.isoformat(), "urlPlaasmaCommerce": "https://api-commerce.edf.fr"})
+        resp.raise_for_status()
+        if "json" not in resp.headers.get("Content-Type", ""):
+            raise ValueError("réponse non JSON (pare-feu EDF ?)")
+        payload = resp.json()
+        out = {}
+        for key, when in (("couleurJourJ", day), ("couleurJourJ1", day + timedelta(days=1))):
+            kind = ZEN_FLEX_CODES.get(payload.get(key))
+            if kind:
+                out[when.isoformat()] = kind
+        return out
+
+    def missing(self):
+        day, out = date.today() - timedelta(days=1), []
+        while day >= ZEN_FLEX_START and len(out) < self.batch:
+            if flex_candidate(day) and day.isoformat() not in self.days:
+                out.append(day)
+            day -= timedelta(days=1)
+        return out
+
+    def save(self):
+        if self.file:
+            tmp = self.file + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(self.days, f, sort_keys=True)
+            os.replace(tmp, self.file)
+
+    def loop(self):
+        while True:
+            found = {}  # gardé même si une requête du rattrapage échoue : la première erreur arrête la passe
+            try:
+                found.update(self.fetch(date.today()))
+                for day in self.missing():
+                    time.sleep(1)
+                    found.update(self.fetch(day))
+                self.error = None
+            except (requests.RequestException, ValueError) as exc:
+                self.error = str(exc)
+                log.warning("API Zen Flex : %s", exc)
+            if found:
+                with self.lock:
+                    changed = any(self.days.get(d) != k for d, k in found.items())
+                    self.days.update(found)
+                    if changed:
+                        try:
+                            self.save()
+                        except OSError as exc:
+                            log.warning("jours Zen Flex : écriture du cache impossible (%s)", exc)
+                self.fetched_at = datetime.now().astimezone().isoformat(timespec="seconds")
+                log.info("jours Zen Flex : %d jour(s) connus", len(self.days))
+            time.sleep(self.interval)
+
+    def get(self):
+        with self.lock:
+            days = dict(self.days)
+        return {"days": days, "since": ZEN_FLEX_START.isoformat(), "fetched_at": self.fetched_at,
+                **({"error": self.error} if self.error else {})}
+
+
 FUEL_API = ("https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/"
             "prix-des-carburants-en-france-flux-instantane-v2/records")
 # Archives journalières officielles du site prix-carburants.gouv.fr (zip d'un XML, ~1 Mo) : prix du jour J
@@ -445,7 +546,9 @@ def offers_config():
     """Prix des options EDF à comparer avec Tempo et consommation de la voiture thermique de référence."""
     return {"base": env_price("BASE_PRICE_KWH"),
             "hchp": {"hc": env_price("HCHP_HC_PRICE_KWH"), "hp": env_price("HCHP_HP_PRICE_KWH")},
-            "zen": {"low": env_price("ZEN_LOW_PRICE_KWH"), "high": env_price("ZEN_HIGH_PRICE_KWH")}}
+            "zen": {"low": env_price("ZEN_LOW_PRICE_KWH"), "high": env_price("ZEN_HIGH_PRICE_KWH")},
+            "zen_flex": {"eco": [env_price("ZEN_FLEX_ECO_HC_PRICE_KWH"), env_price("ZEN_FLEX_ECO_HP_PRICE_KWH")],
+                         "sob": [env_price("ZEN_FLEX_SOB_HC_PRICE_KWH"), env_price("ZEN_FLEX_SOB_HP_PRICE_KWH")]}}
 
 
 def fuels_config():
@@ -672,7 +775,7 @@ def index_page(logo):
     return html.encode()
 
 
-def make_handler(mirror, season, fuel_prices, fuels, history, offers, battery_kwh, source, vehicle_name, gate, logo):
+def make_handler(mirror, season, fuel_prices, fuels, history, offers, battery_kwh, source, vehicle_name, gate, logo, flex_days):
     class Handler(BaseHTTPRequestHandler):
         server_version = "ev-dashboard"
 
@@ -797,7 +900,7 @@ def make_handler(mirror, season, fuel_prices, fuels, history, offers, battery_kw
                                 health=source.health(force=force), car=car_state, charge_curves=charge_curves,
                                 charge_estimate=charge_estimate(car_state, charge_curves),
                                 # carburants de référence avec leur prix du jour (si la consommation est connue)
-                                offers=dict(offers, fuels=[dict(f, current=fuel_prices[f["key"]].get() if f["l100"]
+                                offers=dict(offers, flex_days=flex_days.get() if flex_days else None, fuels=[dict(f, current=fuel_prices[f["key"]].get() if f["l100"]
                                                                 else None) for f in fuels]),
                                 # prix de chaque carburant le jour de chaque recharge (équivalent carburant)
                                 fuel_history=history.get({str(r[1])[:10] for r in sheet["charges"]["rows"]})
@@ -880,6 +983,7 @@ def main():
     fuel_prices = {f["key"]: FuelPrice(f["key"], departement) for f in fuels}
     history = FuelHistory([f["key"] for f in fuels if f["l100"]], departement, os.environ.get("DATA_DIR", "").strip())
     offers = offers_config()
+    flex_days = FlexDays(os.environ.get("DATA_DIR", "").strip()) if all(offers["zen_flex"]["eco"] + offers["zen_flex"]["sob"]) else None
     # Source de données de la marque (brands/<BRAND>/source.py)
     source = load_source(os.environ.get("BRAND") or "stellantis", os.path.join(APP_DIR, "brands"), os.environ)
     logo = CustomLogo(os.environ.get("DASHBOARD_LOGO"), os.environ.get("DASHBOARD_LOGO_INVERT", "") in ("1", "true", "oui"))
@@ -895,7 +999,7 @@ def main():
              ", ".join(f"{f['name']} {f['l100']} L/100 km" for f in fuels))
     ThreadingHTTPServer(("0.0.0.0", port), make_handler(mirror, season, fuel_prices, fuels, history, offers, env_price("BATTERY_KWH"), source,
                                                          os.environ.get("VEHICLE_NAME", "").strip(), gate,
-                                                         logo)).serve_forever()
+                                                         logo, flex_days)).serve_forever()
 
 
 if __name__ == "__main__":

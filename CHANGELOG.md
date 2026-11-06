@@ -4,6 +4,10 @@ Résumé de chaque version, affiché dans le dashboard (clic sur le numéro de v
 
 Format : un titre `## <version> — <AAAA-MM-JJ>` par version, puis des puces `- ` d'une ligne (`**gras**` et `` `code` `` acceptés).
 
+## 0.17.0 — 2026-11-06
+- **Offre Zen Flex** dans le comparatif : jours Éco 🟢 et Sobriété 🟠, calendrier des jours Sobriété lu chez EDF (jours Rouges Tempo en attendant).
+- **Répartition de la période** dans l'info-bulle des deux offres Zen.
+
 ## 0.16.0 — 2026-11-06
 - **Nouvelles heures creuses** pour l'option Heures creuses du comparatif : plages d'été (☀️ 1h–6h et 13h–16h) et d'hiver (❄️ 23h–7h), part de la période en heures creuses dans l'info-bulle ; les heures creuses réelles dépendent du compteur Linky.
 
