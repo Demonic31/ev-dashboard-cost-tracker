@@ -4,6 +4,9 @@ Résumé de chaque version, affiché dans le dashboard (clic sur le numéro de v
 
 Format : un titre `## <version> — <AAAA-MM-JJ>` par version, puis des puces `- ` d'une ligne (`**gras**` et `` `code` `` acceptés).
 
+## 0.16.0 — 2026-11-06
+- **Nouvelles heures creuses** pour l'option Heures creuses du comparatif : plages d'été (☀️ 1h–6h et 13h–16h) et d'hiver (❄️ 23h–7h), part de la période en heures creuses dans l'info-bulle ; les heures creuses réelles dépendent du compteur Linky.
+
 ## 0.15.0 — 2026-11-06
 - **Comparatif des offres classé** du moins cher au plus cher, Tempo en tête, en deux groupes : ⚡ abonnements EDF et ⛽ équivalents thermiques ; badges « offre actuelle » et « la moins chère ».
 - **Écart avec Tempo sous chaque coût**, et nouvelle colonne **€/100 km** avec son écart.
