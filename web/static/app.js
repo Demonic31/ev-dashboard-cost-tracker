@@ -271,13 +271,14 @@ function lastChargeItems(r) {
 }
 // Part des heures pleines d'une recharge (#50) : « dont 12 % en HP », couleur de la tranche HP dominante ; rien si 100 % HC
 const HP_TEXT = ["--bleu", "--blanc-txt", "--rouge"];
-function hpNote(slots) {
+function hpNote(r) {
+  const slots = r.slice(C.slots, C.slots + 6).map(Number), costs = trancheCosts(r).cost;
   const total = slots.reduce((a, b) => a + (b || 0), 0), hp = slots.filter((_, i) => isHP(i));
-  const hpKwh = hp.reduce((a, b) => a + (b || 0), 0);
+  const hpKwh = hp.reduce((a, b) => a + (b || 0), 0), hpCost = costs.filter((_, i) => isHP(i)).reduce((a, b) => a + b, 0);
   if (!total || !(hpKwh > 0)) return "";
   const pct = 100 * hpKwh / total, top = hp.indexOf(Math.max(...hp));
-  const tip = `Heures pleines : ${fr(hpKwh, 2)} kWh sur ${fr(total, 2)} kWh` +
-    hp.map((k, j) => k > 0 ? `\n${TRANCHES[2 * j + 1]} : ${fr(k, 2)} kWh` : "").join("");
+  const tip = `Heures pleines : ${fr(hpKwh, 2)} kWh sur ${fr(total, 2)} kWh · ${eur(hpCost)}` +
+    hp.map((k, j) => k > 0 ? `\n${TRANCHES[2 * j + 1]} : ${fr(k, 2)} kWh · ${eur(costs[2 * j + 1])}` : "").join("");
   return `<span class="lc-hp" style="color:var(${HP_TEXT[top]})" title="${esc(tip)}">dont ${pct < 1 ? "< 1" : fr(pct, 0)} % en HP</span>`;
 }
 function renderLastCharge() {
@@ -290,7 +291,7 @@ function renderLastCharge() {
   el.innerHTML = `<button type="button" class="lc-summary" aria-expanded="${lastChargeOpen}"><span class="lc-head"><span class="chev">▸</span>
     <b>🔌 Dernière recharge</b> <span class="when">${when}</span></span><span class="lc-stats"><span>${hDuration(num(r[C.duration]))}</span>
     <span>${fr(r[3], 0)} → ${fr(r[4], 0)} %</span><span>${fr(r[C.kwhBat], 1)} kWh</span><b class="cost">${eur(r[C.cost])}</b></span></button>
-    ${lastChargeOpen ? "" : `<div class="lc-bar"><span>HC/HP</span>${slotBar(slots)}${hpNote(slots)}</div>`}
+    ${lastChargeOpen ? "" : `<div class="lc-bar"><span>HC/HP</span>${slotBar(slots)}${hpNote(r)}</div>`}
     <div class="items"${lastChargeOpen ? "" : " hidden"}>${lastChargeItems(r)}</div>`;
   const toggle = () => { lastChargeOpen = !lastChargeOpen; renderLastCharge(); };
   el.querySelector(".lc-summary").addEventListener("click", toggle);
@@ -361,6 +362,17 @@ function flexSobriety() {
     if (day in known) return known[day] === "sobriete";
     guessed.add(day); return red.has(day);
   } };
+}
+
+// Coût de chaque tranche d'une recharge (#44, #50) : kWh × pertes × prix de la grille Tempo en vigueur à sa date,
+// ramené au coût calculé par le Sheet (au prorata des kWh si la grille manque)
+function trancheCosts(r) {
+  const coef = num(data.loss_coef || 1), day = String(r[C.start]).slice(0, 10);
+  const kwh = TRANCHES.map((_, i) => num(r[C.slots + i]) * coef);
+  const grid = (data.tempo_prices || []).filter(g => g.since <= day), g = grid[grid.length - 1];
+  const raw = g ? kwh.map((k, i) => k * num([g.bleu, g.blanc, g.rouge][i >> 1][i & 1])) : kwh;
+  const tot = raw.reduce((a, b) => a + b, 0), cost = num(r[C.cost]);
+  return { kwh, cost: raw.map(v => tot ? v * cost / tot : 0) };
 }
 
 // Tarif Tempo en vigueur à une date (dernière ligne de la grille du Sheet dont la date d'effet est passée) :
@@ -523,27 +535,131 @@ function chart(id, config) {
   charts[id] = new Chart(document.getElementById(id), config);
 }
 
+// Pas de temps du graphique des coûts (#44) : choisi, ou automatique selon la durée de la période
+const STEP_NAMES = { day: "jour", week: "semaine", month: "mois", year: "année" };
+let costStep = "auto";
+const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+const dayLabel = (s, o) => new Date(s + "T12:00:00").toLocaleDateString("fr-FR", o);
+// Bornes du graphique : début de la période (sinon première recharge), fin de la période plafonnée à aujourd'hui
+function costBounds() {
+  const today = iso(new Date());
+  const first = data.charges.rows.map(r => r[C.start]).filter(v => typeof v === "string").sort()[0]?.slice(0, 10) || today;
+  const from = view.from || first, end = view.to || today;
+  return { from, to: end < today ? end : today, days: Math.round((new Date(end) - new Date(from)) / 864e5) + 1 };
+}
+function autoStep(days) { return days <= 31 ? "day" : days <= 92 ? "week" : days <= 1096 ? "month" : "year"; }
+
+// Jour ou semaine (lundi → dimanche) : coût de chaque tranche, recharge rattachée à son jour de début ; jours vides à 0
+function dayBuckets(step, from, to, rows) {
+  let d = new Date(from + "T12:00:00");
+  if (step === "week") d = addDays(d, -((d.getDay() + 6) % 7));
+  const out = [];
+  for (; iso(d) <= to; d = addDays(d, step === "week" ? 7 : 1)) {
+    const a = iso(d), b = iso(step === "week" ? addDays(d, 6) : d);
+    out.push({ key: a, from: a < from ? from : a, to: b > to ? to : b, full: [a, b],
+               cost: TRANCHES.map(() => 0), kwh: TRANCHES.map(() => 0) });
+  }
+  rows.forEach(r => {
+    const day = r[C.start].slice(0, 10), bk = out.find(x => x.full[0] <= day && day <= x.full[1]);
+    if (!bk) return;
+    const t = trancheCosts(r);
+    t.cost.forEach((v, i) => { bk.cost[i] += v; bk.kwh[i] += t.kwh[i]; });
+  });
+  return out;
+}
+// Année : somme des mois du Sheet, €/100 km recalculé sur les mois où des km sont connus
+function yearBuckets(months) {
+  const by = new Map();
+  months.forEach(m => { const y = m.month.slice(0, 4); by.has(y) || by.set(y, []); by.get(y).push(m); });
+  return [...by].map(([y, ms]) => {
+    const withKm = ms.filter(m => num(m.km) > 0), km = withKm.reduce((a, m) => a + num(m.km), 0);
+    return { label: y, cost: ms.reduce((a, m) => a + num(m.cost), 0), eur_100km: ratio(withKm.reduce((a, m) => a + num(m.cost), 0), km, 100),
+             note: ms.length < 12 ? `Mois couverts : ${monthShort(ms[0].month)} à ${monthShort(ms[ms.length - 1].month)}` : "" };
+  });
+}
+const monthShort = m => new Date(m + "-01T12:00:00").toLocaleDateString("fr-FR", { month: "short", year: "numeric" });
+
+// Pas forcé plus large que le pas automatique : la fenêtre s'élargit pour montrer plusieurs barres,
+// en finissant à la fin de la période (12 semaines, 12 mois ou toutes les années)
+const STEP_ORDER = ["day", "week", "month", "year"];
+function widen(step, b) {
+  const end = new Date(b.to + "T12:00:00"), toM = b.to.slice(0, 7), until = b.to === iso(new Date()) ? "" : " jusqu'à ";
+  if (step === "week") {
+    const d = addDays(end, -7 * 11), from = iso(addDays(d, -((d.getDay() + 6) % 7)));  // lundi, pour 12 semaines entières
+    return { from, charges: data.charges.rows.filter(r => typeof r[C.start] === "string" && r[C.start].slice(0, 10) >= from && r[C.start].slice(0, 10) <= b.to),
+             note: until ? `12 semaines jusqu'au ${dayLabel(b.to, { day: "numeric", month: "short" })}` : "12 dernières semaines" };
+  }
+  if (step === "month") {
+    const fromM = iso(new Date(end.getFullYear(), end.getMonth() - 11, 1)).slice(0, 7);
+    return { months: data.months.filter(m => m.month >= fromM && m.month <= toM),
+             note: until ? `12 mois jusqu'à ${monthShort(toM)}` : "12 derniers mois" };
+  }
+  return { months: data.months.filter(m => m.month <= toM), note: "toutes les années" };
+}
+
+function renderCostChart() {
+  const b = costBounds(), auto = autoStep(b.days), step = costStep === "auto" ? auto : costStep;
+  const sel = document.getElementById("costStep");
+  sel.value = costStep; sel.options[0].text = `Auto · ${STEP_NAMES[auto]}`;
+  const w = STEP_ORDER.indexOf(step) > STEP_ORDER.indexOf(auto) ? widen(step, b) : null;
+  const charges = w?.charges ?? view.charges, months = w?.months ?? view.months, from = w?.from ?? b.from;
+  document.getElementById("costTitle").innerHTML = `Coût par ${STEP_NAMES[step]}${w && !view.all ? ` <small>${w.note}</small>` : ""}`;
+  const byDay = step === "day" || step === "week";
+  const empty = byDay ? charges.length === 0 : months.length === 0;
+  document.getElementById("monthsEmpty").hidden = !empty;
+  document.getElementById("monthsChart").parentElement.hidden = empty;
+  if (empty) { charts.monthsChart?.destroy(); delete charts.monthsChart; return; }
+  const scales = { y: { beginAtZero: true, title: { display: true, text: "€" } },
+                   y1: { beginAtZero: true, position: "right", grid: { drawOnChartArea: false } } };
+  if (byDay) {
+    const bk = dayBuckets(step, from, b.to, charges), tot = bk.map(x => x.cost.reduce((a, v) => a + v, 0));
+    let run = 0;
+    const cumul = tot.map(v => run += v), dense = bk.length > 40;
+    const datasets = TRANCHES.map((name, i) => ({ type: "bar", label: name, stack: "c", yAxisID: "y", order: 2,
+      data: bk.map(x => x.cost[i]), kwh: bk.map(x => x.kwh[i]), hasData: bk.some(x => x.kwh[i] > 0),
+      backgroundColor: isHP(i) ? hatch(css(TRANCHE_COLORS[i])) : css(TRANCHE_COLORS[i]),
+      borderColor: css(TRANCHE_COLORS[i]), borderWidth: isHP(i) ? 1 : 0 }));
+    datasets.push({ type: "line", label: "Cumul (€)", data: cumul, yAxisID: "y1", order: 1, hasData: true,
+      borderColor: css("--accent"), backgroundColor: css("--accent"), tension: 0, pointRadius: dense ? 0 : 2 });
+    const title = x => step === "day" ? dayLabel(x.key, { weekday: "short", day: "numeric", month: "short", year: "numeric" })
+      : `Semaine du ${dayLabel(x.key, { day: "numeric", month: "short", year: "numeric" })}`;
+    scales.x = { stacked: true, ticks: { maxRotation: 0, autoSkipPadding: 8 } }; scales.y.stacked = true; scales.y1.title = { display: true, text: "€ cumulés" };
+    chart("monthsChart", {
+      data: { labels: bk.map(x => dayLabel(x.key, { day: "numeric", month: "short" })), datasets },
+      options: { maintainAspectRatio: false, interaction: { mode: "index", intersect: false }, scales,
+        plugins: { legend: { labels: { boxWidth: 10, filter: (l, d) => d.datasets[l.datasetIndex].hasData } },
+          tooltip: { filter: c => c.dataset.type === "line" || c.raw > 0, itemSort: (a, b) => a.datasetIndex - b.datasetIndex,
+            callbacks: {
+              title: items => title(bk[items[0].dataIndex]),
+              label: c => c.dataset.type === "line" ? `Cumul depuis le ${dayLabel(from, { day: "numeric", month: "short" })} : ${eur(c.raw)}`
+                : `${c.dataset.label} : ${eur(c.raw)} · ${fr(c.dataset.kwh[c.dataIndex], 1)} kWh`,
+              footer: items => { const x = bk[items[0].dataIndex], t = tot[items[0].dataIndex];
+                const part = step === "week" && (x.from !== x.full[0] || x.to !== x.full[1])
+                  ? `\nSemaine partielle : du ${dayLabel(x.from, { day: "numeric", month: "short" })} au ${dayLabel(x.to, { day: "numeric", month: "short" })}` : "";
+                return (t > 0 ? `Total : ${eur(t)}` : "Aucune recharge") + part; } } } } },
+    });
+    return;
+  }
+  const rows = step === "year" ? yearBuckets(months)
+    : months.map(m => ({ label: new Date(m.month + "-01").toLocaleDateString("fr-FR", { month: "short", year: "2-digit" }),
+                              cost: m.cost, eur_100km: m.eur_100km, note: "" }));
+  scales.y1.title = { display: true, text: "€/100 km" };
+  chart("monthsChart", {
+    data: { labels: rows.map(m => m.label), datasets: [
+      { type: "bar", label: "Coût (€)", data: rows.map(m => m.cost), backgroundColor: css("--accent"), borderRadius: 6, yAxisID: "y", order: 2 },
+      { type: "line", label: "€/100 km", data: rows.map(m => m.eur_100km === "" ? null : m.eur_100km),
+        borderColor: css("--rouge"), backgroundColor: css("--rouge"), tension: .3, yAxisID: "y1", order: 1 }] },
+    options: { maintainAspectRatio: false, interaction: { mode: "index", intersect: false }, scales,
+      plugins: { legend: { labels: { boxWidth: 10 } },
+                 tooltip: { callbacks: { label: c => `${c.dataset.label} : ${fr(c.raw, 2)}`,
+                                         footer: items => rows[items[0].dataIndex].note } } } },
+  });
+}
+
 function renderCharts() {
   Chart.defaults.color = css("--muted");
   Chart.defaults.borderColor = css("--border");
-  const months = view.months;
-  document.getElementById("monthsEmpty").hidden = months.length > 0;
-  document.getElementById("monthsChart").parentElement.hidden = months.length === 0;
-  const datasets = [
-    { type: "bar", label: "Coût (€)", data: months.map(m => m.cost), backgroundColor: css("--accent"),
-      borderRadius: 6, yAxisID: "y", order: 2 },
-  ];
-  datasets.push({ type: "line", label: "€/100 km", data: months.map(m => m.eur_100km === "" ? null : m.eur_100km),
-    borderColor: css("--rouge"), backgroundColor: css("--rouge"), tension: .3, yAxisID: "y1", order: 1 });
-  if (months.length) chart("monthsChart", {
-    data: { labels: months.map(m => new Date(m.month + "-01").toLocaleDateString("fr-FR", { month: "short", year: "2-digit" })), datasets },
-    options: { maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-      scales: { y: { beginAtZero: true, title: { display: true, text: "€" } },
-                y1: { beginAtZero: true, position: "right", grid: { drawOnChartArea: false },
-                      title: { display: true, text: "€/100 km" } } },
-      plugins: { legend: { labels: { boxWidth: 10 } },
-                 tooltip: { callbacks: { label: c => `${c.dataset.label} : ${fr(c.raw, 2)}` } } } },
-  });
+  renderCostChart();
 
   const tr = view.tranches, total = tr.reduce((s, v) => s + v, 0);
   document.getElementById("tranchesEmpty").hidden = total > 0;
@@ -816,6 +932,7 @@ function onPeriod() {
   if (data) render();
 }
 [preset, document.getElementById("from"), document.getElementById("to")].forEach(e => e.addEventListener("change", onPeriod));
+document.getElementById("costStep").addEventListener("change", e => { costStep = e.target.value; if (data) renderCostChart(); });
 document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => {
   document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("active", x === b));
   currentTab = b.dataset.tab;

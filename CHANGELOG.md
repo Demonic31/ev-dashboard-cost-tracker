@@ -4,6 +4,11 @@ Résumé de chaque version, affiché dans le dashboard (clic sur le numéro de v
 
 Format : un titre `## <version> — <AAAA-MM-JJ>` par version, puis des puces `- ` d'une ligne (`**gras**` et `` `code` `` acceptés).
 
+## 0.18.0 — 2026-11-09
+- **Graphique des coûts par jour, semaine, mois ou année**, selon la durée de la période, ou au choix dans un petit menu à côté du titre ; un pas plus large que la période élargit le graphique (12 semaines, 12 mois ou toutes les années).
+- **Par jour et par semaine** : barres empilées par tranche Tempo, coût et kWh de chaque tranche en info-bulle, courbe du coût cumulé.
+- **Dernière recharge repliée** : coût de la part en heures pleines dans l'info-bulle de « dont X % en HP ».
+
 ## 0.17.1 — 2026-11-09
 - **Info-bulle Tempo** du comparatif : répartition de la période, part en heures creuses et part de chaque couleur de jour (🔵 ⚪ 🔴).
 
