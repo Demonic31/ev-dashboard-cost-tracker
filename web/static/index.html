@@ -212,6 +212,9 @@
   .grid2 > .card { display: flex; flex-direction: column; }
   @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
   .chart { position: relative; height: 280px; }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+  .card-head h2 { margin: 0; }
+  .card-head select { padding: 2px 6px; font-size: .78rem; color: var(--muted); }
   .empty { color: var(--muted); font-size: .9rem; padding: 24px 0; text-align: center; }
   .stock { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
   .stock .n { font-size: 1.35rem; font-weight: 650; font-variant-numeric: tabular-nums; }
@@ -301,7 +304,11 @@
 
   <section class="grid2">
     <div class="card">
-      <h2>Coût par mois</h2>
+      <div class="card-head"><h2 id="costTitle">Coût par mois</h2>
+        <select id="costStep" aria-label="Pas de temps du graphique">
+          <option value="auto">Auto</option><option value="day">Jour</option><option value="week">Semaine</option>
+          <option value="month">Mois</option><option value="year">Année</option>
+        </select></div>
       <div class="chart"><canvas id="monthsChart"></canvas></div>
       <div class="empty" id="monthsEmpty" hidden>Aucune recharge sur la période</div>
     </div>
