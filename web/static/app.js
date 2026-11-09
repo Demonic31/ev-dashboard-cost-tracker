@@ -267,9 +267,10 @@ function lastChargeItems(r) {
       <div class="sub">${fr(r[C.kwh], 1)} kWh facturés</div></div>
     <div><div class="label">Coût</div><div class="n cost">${eur(r[C.cost])}</div>
       <div class="sub lc-price"><span>${fr(r[C.eurKwh], 4)} €/kWh${eqs.length ? '<span class="dot"> ·</span>' : ""}</span>${eqs.length ? `<span class="fuels">${eqs.map(fuelTag).join("")}</span>` : ""}</div></div>
-    <div class="slots"><div class="label">Heures creuses / pleines</div>${slotBar(r.slice(C.slots, C.slots + 6).map(Number))}</div>`;
+    <div class="slots"><div class="label">Heures creuses / pleines</div><div class="lc-row">${slotBar(r.slice(C.slots, C.slots + 6).map(Number))}${hpNote(r)}</div></div>`;
 }
-// Part des heures pleines d'une recharge (#50) : « dont 12 % en HP », couleur de la tranche HP dominante ; rien si 100 % HC
+// Part des heures pleines d'une recharge (#50, #63) : « dont 12 % en HP » à droite de la barre, repliée comme dépliée ;
+// couleur de la tranche HP dominante ; rien si 100 % HC
 const HP_TEXT = ["--bleu", "--blanc-txt", "--rouge"];
 function hpNote(r) {
   const slots = r.slice(C.slots, C.slots + 6).map(Number), costs = trancheCosts(r).cost;
