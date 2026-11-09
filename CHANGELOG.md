@@ -4,6 +4,9 @@ Résumé de chaque version, affiché dans le dashboard (clic sur le numéro de v
 
 Format : un titre `## <version> — <AAAA-MM-JJ>` par version, puis des puces `- ` d'une ligne (`**gras**` et `` `code` `` acceptés).
 
+## 0.17.1 — 2026-11-09
+- **Info-bulle Tempo** du comparatif : répartition de la période, part en heures creuses et part de chaque couleur de jour (🔵 ⚪ 🔴).
+
 ## 0.17.0 — 2026-11-06
 - **Offre Zen Flex** dans le comparatif : jours Éco 🟢 et Sobriété 🟠, calendrier des jours Sobriété lu chez EDF (jours Rouges Tempo en attendant).
 - **Répartition de la période** dans l'info-bulle des deux offres Zen.

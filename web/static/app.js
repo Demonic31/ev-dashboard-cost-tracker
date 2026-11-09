@@ -364,14 +364,14 @@ function flexSobriety() {
 }
 
 // Tarif Tempo en vigueur à une date (dernière ligne de la grille du Sheet dont la date d'effet est passée) :
-// une ligne par couleur, HP puis HC
-function tempoPrices(day) {
+// une ligne par couleur, HP puis HC, puis la répartition de la période (mix) si fournie
+function tempoPrices(day, mix = "") {
   const grid = (data.tempo_prices || []).filter(g => !day || g.since <= day), g = grid[grid.length - 1];
-  if (!g) return "ton contrat (prix de la grille Tempo du Sheet)";
+  if (!g) return "ton contrat (prix de la grille Tempo du Sheet)" + (mix && "\n" + mix);
   const [hcS, hcE] = data.hc_hours, p = v => fr(v, 4);
   return [["🔵", g.bleu], ["⚪", g.blanc], ["🔴", g.rouge]]
     .map(([dot, [hc, hp]]) => `${dot} HP ${p(hp)} · HC ${hcS}h–${hcE}h ${p(hc)} €/kWh`).join("\n") +
-    `\nTarif en vigueur depuis le ${dshort(g.since)}`;
+    (mix && "\n" + mix) + `\nTarif en vigueur depuis le ${dshort(g.since)}`;
 }
 
 function renderOffers() {
@@ -393,7 +393,12 @@ function renderOffers() {
   // carburants = L/100 km × prix moyen, indépendant du kilométrage
   const ref = view.cost, ref100 = typeof view.kpi[3] === "number" ? view.kpi[3] : null;
   const elec100 = cost => ref100 != null && ref ? ref100 * cost / ref : null;
-  const list = [{ name: "Tempo", sub: tempoPrices(view.to), cost: ref, per100: ref100, color: "--accent", group: "ref" }];
+  // répartition Tempo de la période : part HC, puis part de chaque couleur de jour (couleurs absentes omises)
+  const ts = TRANCHES.map((_, i) => rows.reduce((s, r) => s + num(r[C.slots + i]), 0)), tTot = ts.reduce((a, b) => a + b, 0);
+  const tempoMix = tTot ? `${Math.round(100 * (ts[0] + ts[2] + ts[4]) / tTot)} % en heures creuses · ` +
+    [["🔵", 0], ["⚪", 2], ["🔴", 4]].map(([dot, i]) => [dot, Math.round(100 * (ts[i] + ts[i + 1]) / tTot)])
+      .filter(([, p]) => p).map(([dot, p]) => `${dot} ${p} %`).join(" ") + " sur la période" : "";
+  const list = [{ name: "Tempo", sub: tempoPrices(view.to, tempoMix), cost: ref, per100: ref100, color: "--accent", group: "ref" }];
   const elec = (name, sub, cost, color) => ({ name, sub, cost, per100: elec100(cost), color, group: "elec" });
   list.push(o.base ? elec("Base", `${fr(o.base, 4)} €/kWh`, view.kwh * o.base, "--base")
                    : { name: "Base", missing: "BASE_PRICE_KWH", group: "elec" });
